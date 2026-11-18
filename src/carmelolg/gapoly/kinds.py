@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from . import fast_render, operators, shapes
+from . import discs, fast_render, operators, shapes
 from .limits import Limits
 
 
@@ -35,4 +35,7 @@ class Kind:
 POLYGON = Kind("polygon", "polygon", "polygons", shapes.COLS, True, 400, 60, fast_render.render_mse,
                fast_render.render_image, shapes.random_row, operators.mutate, shapes.describe)
 
-KINDS: dict[str, Kind] = {POLYGON.name: POLYGON}
+DISC = Kind("disc", "disc", "discs", discs.COLS, True, 2000, 200, discs.render_mse, discs.render_image,
+            discs.random_row, discs.mutate, discs.describe)
+
+KINDS: dict[str, Kind] = {k.name: k for k in (POLYGON, DISC)}
