@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "carmelolg-gapoly"
 version = "0.1.0"
-description = "Evolve semi-transparent polygons with a genetic algorithm (GALib) until they look like a target photo."
+description = "Evolve semi-transparent polygons, discs or Voronoi points with a genetic algorithm (GALib) until they look like a target photo."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["carmelolg-galib>=0.3.0", "numpy>=1.24", "Pillow>=10", "numba>=0.60"]

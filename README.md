@@ -3,10 +3,10 @@
 `gapoly` = GA + polygons (distribution `carmelolg-gapoly`, import `carmelolg.gapoly`, command `gapoly`).
 
 Genetic algorithm that evolves semi-transparent elements until, stacked, they look like a target photo.
-The element is chosen with `--shape`: `polygon` (default) or `disc`.
+The element is chosen with `--shape`: `polygon` (default), `disc` or `voronoi`.
 Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI as `carmelolg-galib`).
 
-- **Genome**: float32 array, one row per element, drawn in row order. A polygon has 3-6 vertices and a colour (RGBA), a disc a centre, a radius and a colour.
+- **Genome**: float32 array, one row per element, drawn in row order. A polygon has 3-6 vertices and a colour (RGBA), a disc a centre, a radius and a colour, a Voronoi seed a position and a colour.
 - **Fitness**: pixel MSE between render and target (lower is better, `maximize = False`).
 - **Mutation**: move or reshape an element (a vertex, or the radius of a disc), change colour/alpha, add / remove an element, change overlap order.
 - **Crossover**: swap tails of the two element lists.
@@ -17,10 +17,12 @@ Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI
 |---|---|---|---|
 | `polygon` | polygon with 3-6 vertices | 17 columns, see below | 400 |
 | `disc` | disc, from one pixel up to a group of pixels | 7 columns: `x y radius r g b a` | 2000 |
+| `voronoi` | seed of a Voronoi cell: each pixel takes the colour of its nearest seed | 5 columns: `x y r g b` | 1000 |
 
 Each kind lives in its own module with its layout, Numba rasteriser and mutation (`shapes.py` and `fast_render.py` for
-polygons, `discs.py`); `kinds.py` is the table that ties them to the rest. A disc is never smaller than the pixel under its
+polygons, `discs.py`, `voronoi.py`); `kinds.py` is the table that ties them to the rest. A disc is never smaller than the pixel under its
 centre, and its radius is a fraction of the longest image side, so discs stay round at any resolution.
+Voronoi seeds have no size, alpha or drawing order, so `--start-size` and `--max-size` do nothing for them. The rasteriser finds the nearest seed with a grid, exactly and in time close to the number of pixels: 20000 seeds on a 512x341 image take about 10 ms.
 
 ## Polygon genome layout
 
@@ -72,4 +74,4 @@ python -m pytest
 
 ## Ideas not done yet
 
-Voronoi points as a third kind, region weights (face counts more), SSIM fitness, greedy hill-climbing baseline.
+Region weights (face counts more), SSIM fitness, greedy hill-climbing baseline.

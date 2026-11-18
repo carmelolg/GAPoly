@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from . import discs, fast_render, operators, shapes
+from . import discs, fast_render, operators, shapes, voronoi
 from .limits import Limits
 
 
@@ -38,4 +38,7 @@ POLYGON = Kind("polygon", "polygon", "polygons", shapes.COLS, True, 400, 60, fas
 DISC = Kind("disc", "disc", "discs", discs.COLS, True, 2000, 200, discs.render_mse, discs.render_image,
             discs.random_row, discs.mutate, discs.describe)
 
-KINDS: dict[str, Kind] = {k.name: k for k in (POLYGON, DISC)}
+VORONOI = Kind("voronoi", "seed", "seeds", voronoi.COLS, False, 1000, 150, voronoi.render_mse, voronoi.render_image,
+               voronoi.random_row, voronoi.mutate, voronoi.describe)
+
+KINDS: dict[str, Kind] = {k.name: k for k in (POLYGON, DISC, VORONOI)}

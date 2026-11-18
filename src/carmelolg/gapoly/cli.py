@@ -49,9 +49,9 @@ class _Formatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescription
 DESCRIPTION = """\
 Ricrea una foto con elementi semitrasparenti, usando un algoritmo genetico.
 
-Ogni individuo è un'immagine fatta di elementi: poligoni o dischi (--shape). Un disco può coprire
-un solo pixel o un gruppo di pixel. A ogni generazione sopravvivono gli individui più vicini alla
-foto (MSE più basso), si mutano e si incrociano.
+Ogni individuo è un'immagine fatta di elementi (--shape): poligoni, dischi (da un pixel a un gruppo
+di pixel) o semi di Voronoi, che dividono l'immagine in celle di colore piatto. A ogni generazione
+sopravvivono gli individui più vicini alla foto (MSE più basso), si mutano e si incrociano.
 """
 
 EPILOG = """\
@@ -61,6 +61,7 @@ Esempi:
                      --start-size 0.2 --max-size 0.04 --live
   con i dischi:  gapoly foto.jpg --shape disc --generations 5000 --elements 4000 --size 192 \\
                      --start-size 0.3 --max-size 0.05
+  a mosaico:     gapoly foto.jpg --shape voronoi --generations 5000 --elements 3000 --size 192
 
 Tempi:
   Una generazione costa circa population x elements x size². Parti da valori piccoli,
@@ -97,21 +98,23 @@ def main(argv: list[str] | None = None) -> int:
     shapes = p.add_argument_group("elementi")
     shapes.add_argument("--shape", choices=list(KINDS), default="polygon",
                         help="tipo di elemento. polygon: poligoni da 3 a 6 vertici. "
-                             "disc: dischi, anche di un solo pixel")
+                             "disc: dischi, anche di un solo pixel. "
+                             "voronoi: punti che dividono l'immagine in celle, ognuna del colore del suo punto")
     shapes.add_argument("--elements", "--polygons", "--points", type=int, default=None,
-                        help="elementi massimi per immagine (se manca: 400 poligoni, 2000 dischi). "
+                        help="elementi massimi per immagine (se manca: 400 poligoni, 2000 dischi, 1000 punti). "
                              "Più elementi permettono più dettaglio e rallentano ogni valutazione. "
                              "Alias: --polygons, --points")
     shapes.add_argument("--initial-elements", "--initial-polygons", "--initial-points", type=int, default=None,
                         help="elementi di partenza di ogni individuo; salgono fino a --elements "
-                             "(se manca: 60 poligoni, 200 dischi)")
+                             "(se manca: 60 poligoni, 200 dischi, 150 punti)")
     shapes.add_argument("--start-size", type=float, default=0.5,
                         help="lato massimo di un elemento all'inizio, come frazione del lato dell'immagine "
                              "(0.5 = metà immagine); per i dischi è il diametro. Elementi grandi coprono subito "
-                             "le zone di colore uniforme")
+                             "le zone di colore uniforme. Senza effetto su voronoi")
     shapes.add_argument("--max-size", type=float, default=0.12,
                         help="lato massimo finale. Il limite scende da --start-size a questo valore "
-                             "nel primo 70 per cento delle generazioni, poi resta fisso. Più piccolo, più dettaglio")
+                             "nel primo 70 per cento delle generazioni, poi resta fisso. Più piccolo, più dettaglio. "
+                             "Senza effetto su voronoi")
 
     ops = p.add_argument_group("operatori genetici")
     ops.add_argument("--mutations-per-child", type=float, default=3.0,

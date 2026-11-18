@@ -6,8 +6,8 @@ import pytest
 from carmelolg.galib import GeneticAlgorithm
 from PIL import Image, ImageDraw
 
-from carmelolg.gapoly import KINDS, ImageProblem, Limits, PolygonProblem, discs, operators
-from carmelolg.gapoly.kinds import DISC
+from carmelolg.gapoly import KINDS, ImageProblem, Limits, PolygonProblem, discs, operators, voronoi
+from carmelolg.gapoly.kinds import DISC, VORONOI
 from carmelolg.gapoly.render import render
 from carmelolg.gapoly.shapes import (
     ALPHA,
@@ -307,3 +307,55 @@ def test_command_line_runs_every_kind(tmp_path):
                      "--elements", "30", "--snapshot-every", "3", "--workers", "1", "--seed", "1", "--out", str(out)]) == 0
         assert (out / "final.png").exists() and (out / "evolution.gif").exists()
         assert len((out / "history.csv").read_text().splitlines()) == 8  # header + generations 0..6
+
+
+# ---- Voronoi points ----------------------------------------------------------------------------------------------
+
+def brute_force_voronoi(genome, width, height):
+    """Colour of the nearest seed for every pixel, checking all seeds (no grid)."""
+    ys, xs = np.mgrid[0:height, 0:width]
+    px, py = xs + 0.5, ys + 0.5
+    sx, sy = genome[:, voronoi.X].astype(np.float64) * width, genome[:, voronoi.Y].astype(np.float64) * height
+    nearest = ((px[..., None] - sx) ** 2 + (py[..., None] - sy) ** 2).argmin(axis=-1)
+    return genome[nearest][..., voronoi.RED : voronoi.BLUE + 1]
+
+
+@pytest.mark.parametrize(("count", "width", "height"), [(1, 20, 20), (7, 33, 17), (300, 64, 40), (900, 50, 90)])
+def test_voronoi_grid_search_is_exact(count, width, height):
+    rng = np.random.default_rng(count)
+    genome = rng.random((count, voronoi.COLS), dtype=np.float32)
+    ours = render(genome, width, height, (0.0, 0.0, 0.0), VORONOI)
+    assert np.array_equal(ours, brute_force_voronoi(genome, width, height))
+
+
+def test_voronoi_grid_search_is_exact_with_clustered_seeds_and_seeds_on_the_border():
+    rng = np.random.default_rng(3)
+    genome = rng.random((200, voronoi.COLS), dtype=np.float32)
+    genome[:150, voronoi.X : voronoi.Y + 1] = 0.9 + 0.1 * genome[:150, voronoi.X : voronoi.Y + 1]  # one crowded corner
+    genome[150:160, voronoi.X] = 0.0
+    genome[160:170, voronoi.Y] = 1.0
+    ours = render(genome, 48, 36, (0.0, 0.0, 0.0), VORONOI)
+    assert np.array_equal(ours, brute_force_voronoi(genome, 48, 36))
+
+
+def test_voronoi_two_seeds_split_the_image_in_two():
+    genome = np.stack([voronoi.make_row(0.25, 0.5, (1.0, 0.0, 0.0)), voronoi.make_row(0.75, 0.5, (0.0, 0.0, 1.0))])
+    image = render(genome, 20, 10, (0.0, 0.0, 0.0), VORONOI)
+    assert image[5, 2].tolist() == [1.0, 0.0, 0.0] and image[5, 17].tolist() == [0.0, 0.0, 1.0]
+    assert (image[..., 0] > 0.5).sum() == 100  # the left half
+
+
+def test_voronoi_order_of_the_seeds_does_not_matter():
+    rng = np.random.default_rng(1)
+    genome = rng.random((40, voronoi.COLS), dtype=np.float32)
+    shuffled = genome[rng.permutation(40)]
+    assert np.array_equal(render(genome, 30, 30, (0.0, 0.0, 0.0), VORONOI),
+                          render(shuffled, 30, 30, (0.0, 0.0, 0.0), VORONOI))
+
+
+def test_voronoi_row_layout_is_the_documented_one():
+    """If this fails, update the diagram in voronoi.py and the numba kernel too."""
+    row = voronoi.make_row(0.1, 0.2, (0.3, 0.4, 0.5))
+    assert voronoi.COLS == 5 and (voronoi.X, voronoi.Y, voronoi.RED, voronoi.BLUE) == (0, 1, 2, 4)
+    assert row.tolist() == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])
+    assert voronoi.describe(np.stack([row])) == "#0 seed (0.10,0.20) rgb(0.30,0.40,0.50)"
