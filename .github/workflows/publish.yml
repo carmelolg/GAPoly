@@ -1,0 +1,46 @@
+# Publishes the package to PyPI with Trusted Publishing (no API token).
+# Started by the release-please workflow after it creates a release, or by hand from the Actions tab.
+# Prerequisite, once: a trusted publisher on PyPI (owner carmelolg, repository genetic-evolving-polygons, workflow publish.yml,
+# environment pypi) and the environment "pypi" in the repository settings.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/carmelolg-gapoly
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

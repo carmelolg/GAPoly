@@ -3,7 +3,7 @@
 `gapoly` = GA + polygons (distribution `carmelolg-gapoly`, import `carmelolg.gapoly`, command `gapoly`).
 
 Genetic algorithm that evolves semi-transparent polygons until, stacked, they look like a target photo.
-Built on [GALib](../GALib) (`carmelolg.galib`).
+Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI as `carmelolg-galib`).
 
 - **Genome**: float32 array, one row per polygon (3-6 vertices in [0,1] coordinates, RGBA), drawn in row order.
 - **Fitness**: pixel MSE between render and target (lower is better, `maximize = False`).
@@ -28,8 +28,14 @@ same layout; `test_row_layout_is_the_documented_one` fails if the columns change
 ## Setup
 
 ```bash
+pip install carmelolg-gapoly           # from PyPI
+pip install "carmelolg-gapoly[live]"   # plus the live matplotlib window
+```
+
+From a clone (development):
+
+```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ../GALib
 pip install -e ".[live,dev]"
 ```
 
