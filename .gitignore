@@ -1,0 +1,16 @@
+# environments and build output
+.venv/
+build/
+dist/
+*.egg-info/
+# caches and bytecode
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+# results of the runs
+out/
+# editors and OS
+.idea/
+.DS_Store

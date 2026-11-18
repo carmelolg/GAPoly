@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carmelolg-gapoly"
+version = "0.1.0"
+description = "Evolve semi-transparent polygons with a genetic algorithm (GALib) until they look like a target photo."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["carmelolg-galib>=0.2.0", "numpy>=1.24", "Pillow>=10", "numba>=0.60"]
+
+[project.optional-dependencies]
+live = ["matplotlib>=3.7"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+gapoly = "carmelolg.gapoly.cli:main"
+
+# `carmelolg` (shared with GALib) is a PEP 420 namespace package (no __init__.py); `carmelolg.gapoly` is the package.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["carmelolg.gapoly*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 110
