@@ -11,7 +11,7 @@ Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI
 - **Mutation**: move or reshape an element (a vertex, or the radius of a disc), change colour/alpha, add / remove an element, change overlap order.
 - **Crossover**: swap tails of the two element lists.
 
-## Kinds of element
+## Shapes
 
 | `--shape` | Element | Genome row | Default `--elements` |
 |---|---|---|---|
@@ -19,8 +19,11 @@ Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI
 | `disc` | disc, from one pixel up to a group of pixels | 7 columns: `x y radius r g b a` | 2000 |
 | `voronoi` | seed of a Voronoi cell: each pixel takes the colour of its nearest seed | 5 columns: `x y r g b` | 1000 |
 
-Each kind lives in its own module with its layout, Numba rasteriser and mutation (`shapes.py` and `fast_render.py` for
-polygons, `discs.py`, `voronoi.py`); `kinds.py` is the table that ties them to the rest. A disc is never smaller than the pixel under its
+Each shape is a strategy: `shape.py` defines the abstract `Shape` (draw a genome, error against the target, create and
+mutate elements, describe) and `polygons.py`, `discs.py` and `voronoi.py` implement it, each with its genome layout,
+Numba rasteriser and mutations. `shapes.py` registers them by name (the values of `--shape`); the problem, the viewer and the
+command line only use the interface. `common.py` has `Limits` and the types, `operators.py` the mutation and crossover
+shared by every shape, `kernels.py` the Numba helpers they share. A disc is never smaller than the pixel under its
 centre, and its radius is a fraction of the longest image side, so discs stay round at any resolution.
 Voronoi seeds have no size, alpha or drawing order, so `--start-size` and `--max-size` do nothing for them. The rasteriser finds the nearest seed with a grid, exactly and in time close to the number of pixels: 20000 seeds on a 512x341 image take about 10 ms.
 
@@ -35,8 +38,8 @@ meaning:  n | x0  y0  x1  y1  ...    x5  y5 |  r   g   b   a
 ```
 
 `n` is the number of vertices used (3-6), the rest are ignored. Do not index rows with bare numbers: use the names
-in `shapes.py` (`N_VERTICES`, `X(v)`, `Y(v)`, `RED`..`ALPHA`, `vertices`, `color`, `make_row`).
-`describe(genome)` prints a genome as text, one line per polygon. The numba kernel (`fast_render.py`) reads the
+in `polygons.py` (`N_VERTICES`, `X(v)`, `Y(v)`, `RED`..`ALPHA`, `vertices`, `color`, `make_row`).
+`describe(genome)` prints a genome as text, one line per polygon. The numba kernel (`polygons.py`) reads the
 same layout; `test_row_layout_is_the_documented_one` fails if the columns change.
 
 ## Setup
@@ -63,8 +66,8 @@ python -m carmelolg.gapoly photo.jpg --snapshot-every 1 --generations 300  # one
 Output in `out/<name>/`: `snapshots/gen_*.png`, `final.png`, `evolution.gif`, `history.csv`.
 Elements shrink coarse-to-fine: from `--start-size` (0.5) to `--max-size` (0.12, fraction of image side) over the first 70% of the run.
 The live window lays out its panels by photo orientation: stacked for landscape, side by side for portrait/square.
-Rendering and error are one compiled Numba loop (`fast_render.py`, releases the GIL). Fitness runs in parallel with GALib `workers=`: `--workers N` (default all CPUs), `--parallel thread|process` (default thread).
-Useful options: `--shape`, `--elements` (aliases `--polygons`, `--points`), `--population`, `--mutation-rate`, `--size` (working resolution: smaller = faster), `--seed`.
+Rendering and error are one compiled Numba loop that releases the GIL, so fitness runs in parallel with GALib `workers=` in a thread pool: `--workers N` (default all CPUs).
+Useful options: `--shape`, `--elements`, `--population`, `--mutation-rate`, `--size` (working resolution: smaller = faster), `--seed`.
 
 ## Tests
 

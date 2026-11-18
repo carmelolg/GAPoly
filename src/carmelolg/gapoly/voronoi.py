@@ -20,18 +20,15 @@ from random import Random
 
 import numpy as np
 from numba import njit
-from numpy.typing import NDArray
 
-from .fast_render import canvas_mse, fill
-from .limits import Limits, clamp
+from .common import Array, Genome, Limits, Row, clamp
+from .kernels import canvas_mse, fill
 from .operators import mutate_rows
+from .shape import Shape
 
 X, Y = 0, 1
 RED, GREEN, BLUE = 2, 3, 4
 COLS = 5
-
-Genome = NDArray[np.float32]
-Row = NDArray[np.float32]
 
 
 def make_row(x: float, y: float, rgb: tuple[float, float, float]) -> Row:
@@ -147,3 +144,29 @@ def render_image(genome: np.ndarray, width: int, height: int, background: np.nda
     canvas = np.empty((height, width, 3), dtype=np.float32)
     render_into(np.ascontiguousarray(genome, dtype=np.float32), background, canvas)
     return canvas
+
+
+class VoronoiShape(Shape):
+    name = "voronoi"
+    plural = "seeds"
+    cols = COLS
+    uses_size = False
+    default_elements = 1000
+    default_initial = 150
+
+    def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
+        return float(render_mse(genome, target, background))
+
+    def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
+        return render_image(genome, width, height, background)
+
+    def random_row(self, rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
+                   center: tuple[float, float] | None = None) -> Row:
+        return random_row(rng, limits, rgb, center)
+
+    def mutate(self, genome: Genome, rng: Random, rate: float, limits: Limits,
+               per_element: float | None = None) -> Genome:
+        return mutate(genome, rng, rate, limits, per_element)
+
+    def describe(self, genome: Genome) -> str:
+        return describe(genome)

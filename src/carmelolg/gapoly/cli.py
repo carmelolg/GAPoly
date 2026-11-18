@@ -8,21 +8,22 @@ import numpy as np
 from carmelolg.galib import GenerationStats, GeneticAlgorithm, PrintProgress
 from PIL import Image, ImageOps
 
+from .common import Limits
 from .help_format import colorize, use_color
-from .kinds import KINDS, Kind
-from .limits import Limits
 from .problem import ImageProblem
+from .shape import Shape
+from .shapes import SHAPES
 from .viewer import LiveView, SizeSchedule, Snapshots
 
 
 class Progress(PrintProgress):
-    def __init__(self, kind: Kind, every: int = 1) -> None:
+    def __init__(self, shape: Shape, every: int = 1) -> None:
         super().__init__(every=every)
-        self.kind = kind
+        self.shape = shape
 
     def format_line(self, stats: GenerationStats) -> str:
         return (f"gen {stats.generation:6d} | best mse {stats.best_fitness:.5f} | "
-                f"mean {stats.mean_fitness:.5f} | {self.kind.plural} {len(stats.best_genome)}")
+                f"mean {stats.mean_fitness:.5f} | {self.shape.plural} {len(stats.best_genome)}")
 
 
 def load_target(path: Path, size: int) -> np.ndarray:
@@ -45,6 +46,8 @@ class _Formatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescription
         text = super().format_help()
         return colorize(text) if use_color() else text
 
+
+HISTORY_EVERY = 1000  # genomes kept in memory in result.history: one generation in this many (history.csv has all)
 
 DESCRIPTION = """\
 Ricrea una foto con elementi semitrasparenti, usando un algoritmo genetico.
@@ -73,10 +76,9 @@ Output in --out: final.png, evolution.gif, history.csv, snapshots/gen_*.png.
 
 
 METAVARS = {
-    "generations": "N", "population": "N", "seed": "N", "elements": "N", "initial_elements": "N",
-    "start_size": "FRAZIONE", "max_size": "FRAZIONE", "mutations_per_child": "N", "mutation_rate": "0-1",
-    "crossover_rate": "0-1", "size": "PX", "output_width": "PX", "snapshot_every": "N", "history_every": "N", "out": "CARTELLA",
-    "workers": "N", "live_every": "N",
+    "generations": "N", "population": "N", "seed": "N", "elements": "N", "start_size": "FRAZIONE",
+    "max_size": "FRAZIONE", "mutations_per_child": "N", "mutation_rate": "0-1", "crossover_rate": "0-1",
+    "size": "PX", "output_width": "PX", "snapshot_every": "N", "out": "CARTELLA", "workers": "N", "live_every": "N",
 }
 
 
@@ -91,22 +93,19 @@ def main(argv: list[str] | None = None) -> int:
                      help="generazioni da evolvere: più ne fai, più l'immagine si avvicina alla foto")
     run.add_argument("--population", type=int, default=40,
                      help="immagini candidate per generazione. Il costo cresce in modo lineare. "
-                          "Non è il numero di poligoni (--elements)")
+                          "Non è il numero di elementi (--elements)")
     run.add_argument("--seed", type=int, default=None,
                      help="seme casuale: stesso seme, stessa evoluzione. Senza seme ogni corsa è diversa")
 
     shapes = p.add_argument_group("elementi")
-    shapes.add_argument("--shape", choices=list(KINDS), default="polygon",
+    shapes.add_argument("--shape", choices=list(SHAPES), default="polygon",
                         help="tipo di elemento. polygon: poligoni da 3 a 6 vertici. "
                              "disc: dischi, anche di un solo pixel. "
                              "voronoi: punti che dividono l'immagine in celle, ognuna del colore del suo punto")
-    shapes.add_argument("--elements", "--polygons", "--points", type=int, default=None,
+    shapes.add_argument("--elements", type=int, default=None,
                         help="elementi massimi per immagine (se manca: 400 poligoni, 2000 dischi, 1000 punti). "
                              "Più elementi permettono più dettaglio e rallentano ogni valutazione. "
-                             "Alias: --polygons, --points")
-    shapes.add_argument("--initial-elements", "--initial-polygons", "--initial-points", type=int, default=None,
-                        help="elementi di partenza di ogni individuo; salgono fino a --elements "
-                             "(se manca: 60 poligoni, 200 dischi, 150 punti)")
+                             "Ogni individuo parte con meno elementi e sale fino a questo numero")
     shapes.add_argument("--start-size", type=float, default=0.5,
                         help="lato massimo di un elemento all'inizio, come frazione del lato dell'immagine "
                              "(0.5 = metà immagine); per i dischi è il diametro. Elementi grandi coprono subito "
@@ -122,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
                           "Troppi e quasi ogni figlio peggiora, pochi e l'evoluzione ristagna")
     ops.add_argument("--mutation-rate", type=float, default=0.2,
                      help="probabilità, per figlio, di aggiungere un elemento, di rimuoverne uno "
-                          "e di cambiare l'ordine di sovrapposizione (ognuna per conto suo, da 0 a 1)")
+                          "e di cambiare l'ordine di sovrapposizione, tranne per voronoi (ognuna per conto suo, da 0 a 1)")
     ops.add_argument("--crossover-rate", type=float, default=0.2,
                      help="probabilità che due genitori scambino una parte degli elementi (da 0 a 1). "
                           "Con molti elementi peggiora spesso i figli: tienila bassa")
@@ -136,20 +135,13 @@ def main(argv: list[str] | None = None) -> int:
                           "gli elementi si ridisegnano nitidi a qualsiasi misura")
     res.add_argument("--snapshot-every", type=int, default=100,
                      help="salva un PNG del migliore ogni N generazioni (1 = ogni generazione)")
-    res.add_argument("--history-every", type=int, default=1000,
-                     help="conserva in memoria il genoma migliore di una generazione ogni N, e di tutte le altre "
-                          "solo l'errore. Evita che una corsa lunga con molti elementi riempia la RAM "
-                          "(history.csv e risultato finale non cambiano)")
     res.add_argument("--out", type=Path, default=None,
                      help="cartella di output. Se manca: out/<nome della foto>")
 
     perf = p.add_argument_group("prestazioni e finestra live")
     perf.add_argument("--workers", type=int, default=os.cpu_count() or 1,
-                      help="worker che valutano gli individui in parallelo (vedi --parallel). 1 = nessun parallelismo; "
-                           "il default è il numero di CPU")
-    perf.add_argument("--parallel", choices=["thread", "process"], default="thread",
-                      help="tipo di worker. thread: il rendering Numba rilascia il GIL, nessuna copia dei dati. "
-                           "process: processi separati (più memoria, utile solo se la fitness non rilascia il GIL)")
+                      help="thread che valutano gli individui in parallelo (il rendering Numba rilascia il GIL). "
+                           "1 = nessun parallelismo; il default è il numero di CPU")
     perf.add_argument("--live", action="store_true",
                       help="apre una finestra con foto, miglior immagine e curva dell'errore; "
                            "i pannelli seguono l'orientamento della foto")
@@ -159,22 +151,21 @@ def main(argv: list[str] | None = None) -> int:
         action.metavar = METAVARS.get(action.dest, action.metavar)
     args = p.parse_args(argv)
 
-    kind = KINDS[args.shape]
-    elements = args.elements or kind.default_elements
-    initial = args.initial_elements or min(kind.default_initial, elements)
+    shape = SHAPES[args.shape]
+    elements = args.elements or shape.default_elements
     out = args.out or Path("out") / args.target.stem
     out.mkdir(parents=True, exist_ok=True)
-    target = load_target(args.target, args.size)
     limits = Limits(max_elements=elements, max_size=max(args.start_size, args.max_size), min_size=1.0 / args.size)
-    problem = ImageProblem(target, limits, initial, args.mutations_per_child, kind)
-    callbacks = [Progress(kind, every=50), Snapshots(problem, out, args.snapshot_every, args.output_width)]
-    if kind.uses_size:
+    problem = ImageProblem(load_target(args.target, args.size), limits, min(shape.default_initial, elements),
+                           args.mutations_per_child, shape)
+    callbacks = [Progress(shape, every=50), Snapshots(problem, out, args.snapshot_every, args.output_width)]
+    if shape.uses_size:
         callbacks.append(SizeSchedule(problem, args.max_size, args.generations))
     if args.live:
         callbacks.append(LiveView(problem, args.live_every))
     result = GeneticAlgorithm(problem, population_size=args.population, max_generations=args.generations,
-                              mutation_rate=args.mutation_rate, crossover_rate=args.crossover_rate, callbacks=callbacks, seed=args.seed, diversity=None,
-                              history_genome_every=args.history_every,
-                              workers=args.workers if args.workers > 1 else None, parallel=args.parallel).run()
+                              mutation_rate=args.mutation_rate, crossover_rate=args.crossover_rate,
+                              callbacks=callbacks, seed=args.seed, diversity=None, history_genome_every=HISTORY_EVERY,
+                              workers=args.workers if args.workers > 1 else None, parallel="thread").run()
     print(f"best mse {result.best.fitness:.5f} after {result.generations} generations -> {out}/")
     return 0

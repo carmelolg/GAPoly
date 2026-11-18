@@ -7,18 +7,23 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, TextIO
 
+import numpy as np
 from carmelolg.galib import Callback, GenerationStats, GeneticAlgorithm, Result
 from PIL import Image
 
-from .problem import PolygonProblem
-from .render import to_image
+from .common import Array
+from .problem import ImageProblem
+
+
+def to_image(array: Array) -> Image.Image:
+    return Image.fromarray((np.clip(array, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGB")
 
 
 class SizeSchedule(Callback):
-    """Coarse to fine: the polygon size cap shrinks (log scale) from its starting value to ``final`` by
-    ``until`` (fraction of the run), then stays there. New and mutated polygons obey the current cap."""
+    """Coarse to fine: the element size cap shrinks (log scale) from its starting value to ``final`` by
+    ``until`` (fraction of the run), then stays there. New and mutated elements obey the current cap."""
 
-    def __init__(self, problem: PolygonProblem, final: float, total_generations: int, until: float = 0.7) -> None:
+    def __init__(self, problem: ImageProblem, final: float, total_generations: int, until: float = 0.7) -> None:
         self.problem, self.final = problem, final
         self.start = problem.limits.max_size
         self.span = max(1.0, total_generations * until)
@@ -37,7 +42,7 @@ class Snapshots(Callback):
     - at the end: ``final.png``, and ``evolution.gif`` composed from the PNG files on disk, one frame at a time.
     """
 
-    def __init__(self, problem: PolygonProblem, out_dir: Path, every: int = 100, output_width: int = 512,
+    def __init__(self, problem: ImageProblem, out_dir: Path, every: int = 100, output_width: int = 512,
                  frame_width: int = 256) -> None:
         self.problem, self.out_dir, self.every = problem, out_dir, max(1, every)
         self.output_width, self.frame_width = output_width, frame_width
@@ -84,7 +89,7 @@ class Snapshots(Callback):
 class LiveView(Callback):
     """matplotlib window: target | best render | error curve. Needs ``pip install matplotlib``."""
 
-    def __init__(self, problem: PolygonProblem, every: int = 10) -> None:
+    def __init__(self, problem: ImageProblem, every: int = 10) -> None:
         import matplotlib.pyplot as plt
 
         self.plt, self.problem, self.every = plt, problem, max(1, every)
@@ -100,7 +105,7 @@ class LiveView(Callback):
         a_target.set_title("target")
         self.a_best.axis("off")
         a_target.axis("off")
-        self.image = self.a_best.imshow(problem.render(problem.kind.empty_genome()))
+        self.image = self.a_best.imshow(problem.render(problem.shape.empty_genome()))
         self.a_curve.set_xlabel("generation")
         self.a_curve.set_ylabel("MSE")
         (self.line,) = self.a_curve.plot([], [])
@@ -113,7 +118,7 @@ class LiveView(Callback):
         if stats.generation % self.every:
             return
         self.image.set_data(self.problem.render(stats.best_genome))
-        plural = self.problem.kind.plural
+        plural = self.problem.shape.plural
         self.a_best.set_title(f"generation {stats.generation}  mse {stats.best_fitness:.5f}  {plural} {len(stats.best_genome)}")
         self.line.set_data(self.x, self.y)
         self.a_curve.relim()

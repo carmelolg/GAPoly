@@ -6,10 +6,8 @@ import pytest
 from carmelolg.galib import GeneticAlgorithm
 from PIL import Image, ImageDraw
 
-from carmelolg.gapoly import KINDS, ImageProblem, Limits, PolygonProblem, discs, operators, voronoi
-from carmelolg.gapoly.kinds import DISC, VORONOI
-from carmelolg.gapoly.render import render
-from carmelolg.gapoly.shapes import (
+from carmelolg.gapoly import SHAPES, ImageProblem, Limits, Shape, discs, operators, polygons, voronoi
+from carmelolg.gapoly.polygons import (
     ALPHA,
     COLS,
     N_VERTICES,
@@ -18,14 +16,18 @@ from carmelolg.gapoly.shapes import (
     Y,
     color,
     describe,
-    empty_genome,
     extent,
     make_row,
     random_row,
     vertices,
 )
+from carmelolg.gapoly.shapes import DISC, POLYGON, VORONOI
 
 SQUARE = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+
+
+def render(genome, width, height, background, shape=POLYGON):
+    return shape.render(genome, width, height, background)
 
 
 def gradient_target(size: int = 24) -> np.ndarray:
@@ -41,7 +43,7 @@ def test_render_opaque_and_blended():
     assert render(red, 8, 8, (0.0, 0.0, 0.0))[4, 4].tolist() == [1.0, 0.0, 0.0]
     half = np.stack([make_row(SQUARE, (1.0, 0.0, 0.0, 0.5))])
     assert render(half, 8, 8, (0.0, 0.0, 0.0))[4, 4, 0] == pytest.approx(0.5)
-    assert render(empty_genome(), 4, 4, (0.2, 0.4, 0.6))[0, 0].tolist() == pytest.approx([0.2, 0.4, 0.6])
+    assert render(POLYGON.empty_genome(), 4, 4, (0.2, 0.4, 0.6))[0, 0].tolist() == pytest.approx([0.2, 0.4, 0.6])
 
 
 def pillow_reference(genome, size, background):
@@ -66,15 +68,15 @@ def test_numba_rasteriser_matches_pillow():
 
 
 def test_fitness_zero_for_perfect_and_better_when_closer():
-    problem = PolygonProblem(np.zeros((8, 8, 3), dtype=np.float32))
-    assert problem.fitness(empty_genome()) == 0.0
+    problem = ImageProblem(np.zeros((8, 8, 3), dtype=np.float32))
+    assert problem.fitness(POLYGON.empty_genome()) == 0.0
     far = np.stack([make_row(SQUARE, (1.0, 1.0, 1.0, 0.9))])
     near = np.stack([make_row(SQUARE, (1.0, 1.0, 1.0, 0.1))])
     assert problem.fitness(near) < problem.fitness(far)
 
 
 def test_fitness_equals_numpy_mse_of_the_render():
-    problem = PolygonProblem(gradient_target(), Limits(max_size=0.5), initial_elements=10)
+    problem = ImageProblem(gradient_target(), Limits(max_size=0.5), initial_elements=10)
     genome = problem.random_genome(Random(3))
     expected = float(np.mean((problem.render(genome) - problem.target) ** 2))
     assert problem.fitness(genome) == pytest.approx(expected, rel=1e-4)
@@ -82,15 +84,15 @@ def test_fitness_equals_numpy_mse_of_the_render():
 
 def test_operators_keep_genome_valid_and_inputs_untouched():
     limits = Limits(max_elements=12)
-    problem = PolygonProblem(gradient_target(), limits, initial_elements=6)
+    problem = ImageProblem(gradient_target(), limits, initial_elements=6)
     rng = Random(1)
     a, b = problem.random_genome(rng), problem.random_genome(rng)
     a0, b0 = a.copy(), b.copy()
-    operators.mutate(a, rng, 1.0, limits)
+    polygons.mutate(a, rng, 1.0, limits)
     operators.crossover(a, b, rng, limits)
     assert np.array_equal(a, a0) and np.array_equal(b, b0)
     for _ in range(300):
-        a = operators.mutate(a, rng, 0.3, limits)
+        a = polygons.mutate(a, rng, 0.3, limits)
         a, b = operators.crossover(a, b, rng, limits)
         for genome in (a, b):
             assert genome.shape[1] == COLS and genome.dtype == np.float32
@@ -105,7 +107,7 @@ def test_operators_keep_genome_valid_and_inputs_untouched():
 
 
 def run(seed: int, **kwargs):
-    problem = PolygonProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
+    problem = ImageProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     return GeneticAlgorithm(problem, population_size=16, max_generations=40, mutation_rate=0.1, seed=seed,
                             diversity=None, **kwargs).run()
 
@@ -138,7 +140,7 @@ def test_coloured_help_is_the_plain_help_plus_escape_codes(capsys, monkeypatch):
 
 
 def test_row_layout_is_the_documented_one():
-    """If this fails, someone changed the columns: update the diagram in shapes.py and the numba kernel too."""
+    """If this fails, someone changed the columns: update the diagram in polygons.py and the numba kernel too."""
     r = make_row([(0.1, 0.2), (0.3, 0.4), (0.5, 0.6)], (0.7, 0.8, 0.9, 0.5))
     assert COLS == 17 and len(r) == COLS
     assert r[N_VERTICES] == 3 and (N_VERTICES, X(0), Y(0), X(1), Y(1), X(5), Y(5)) == (0, 1, 2, 3, 4, 11, 12)
@@ -154,7 +156,7 @@ def test_describe_prints_one_line_per_polygon():
 
 
 def test_history_genome_every_keeps_stats_but_drops_most_genomes():
-    problem = PolygonProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
+    problem = ImageProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     result = GeneticAlgorithm(problem, population_size=10, max_generations=25, seed=2, diversity=None,
                               history_genome_every=10).run()
     assert len(result.history) == 26
@@ -169,7 +171,7 @@ def test_snapshots_write_png_csv_and_gif_from_disk(tmp_path):
 
     from carmelolg.gapoly.viewer import Snapshots
 
-    problem = PolygonProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
+    problem = ImageProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     snapshots = Snapshots(problem, tmp_path, every=5, output_width=64, frame_width=32)
     GeneticAlgorithm(problem, population_size=10, max_generations=12, seed=2, diversity=None,
                      callbacks=[snapshots]).run()
@@ -182,60 +184,60 @@ def test_snapshots_write_png_csv_and_gif_from_disk(tmp_path):
     assert rows[0] == "generation,best_mse,mean_mse,elements" and len(rows) == 14  # header + generations 0..12
 
 
-# ---- every kind of element ---------------------------------------------------------------------------------------
+# ---- every shape of element ---------------------------------------------------------------------------------------
 
-KIND_PARAMS = pytest.mark.parametrize("kind", list(KINDS.values()), ids=list(KINDS))
-
-
-def kind_problem(kind, **kwargs):
-    return ImageProblem(gradient_target(), Limits(max_elements=20, min_size=0.02), initial_elements=5, kind=kind, **kwargs)
+SHAPE_PARAMS = pytest.mark.parametrize("shape", list(SHAPES.values()), ids=list(SHAPES))
 
 
-def kind_run(kind, seed, **kwargs):
-    return GeneticAlgorithm(kind_problem(kind), population_size=16, max_generations=40, mutation_rate=0.1, seed=seed,
+def shape_problem(shape, **kwargs):
+    return ImageProblem(gradient_target(), Limits(max_elements=20, min_size=0.02), initial_elements=5, shape=shape, **kwargs)
+
+
+def shape_run(shape, seed, **kwargs):
+    return GeneticAlgorithm(shape_problem(shape), population_size=16, max_generations=40, mutation_rate=0.1, seed=seed,
                             diversity=None, **kwargs).run()
 
 
-@KIND_PARAMS
-def test_every_kind_fitness_equals_numpy_mse_of_the_render(kind):
-    problem = kind_problem(kind)
+@SHAPE_PARAMS
+def test_every_shape_fitness_equals_numpy_mse_of_the_render(shape):
+    problem = shape_problem(shape)
     genome = problem.random_genome(Random(3))
-    assert genome.shape == (5, kind.cols) and genome.dtype == np.float32
+    assert genome.shape == (5, shape.cols) and genome.dtype == np.float32
     expected = float(np.mean((problem.render(genome) - problem.target) ** 2))
     assert problem.fitness(genome) == pytest.approx(expected, rel=1e-4)
 
 
-@KIND_PARAMS
-def test_every_kind_evolves_reproducibly_and_threads_match_serial(kind):
-    first = kind_run(kind, 7)
+@SHAPE_PARAMS
+def test_every_shape_evolves_reproducibly_and_threads_match_serial(shape):
+    first = shape_run(shape, 7)
     assert first.history[-1].best_fitness < first.history[0].best_fitness
-    assert kind_run(kind, 7).best.fitness == first.best.fitness
-    assert kind_run(kind, 7, workers=3, parallel="thread").best.fitness == first.best.fitness
+    assert shape_run(shape, 7).best.fitness == first.best.fitness
+    assert shape_run(shape, 7, workers=3, parallel="thread").best.fitness == first.best.fitness
 
 
-@KIND_PARAMS
-def test_every_kind_operators_keep_genomes_valid_and_inputs_untouched(kind):
-    problem = kind_problem(kind)
+@SHAPE_PARAMS
+def test_every_shape_operators_keep_genomes_valid_and_inputs_untouched(shape):
+    problem = shape_problem(shape)
     limits, rng = problem.limits, Random(1)
     a, b = problem.random_genome(rng), problem.random_genome(rng)
     a0, b0 = a.copy(), b.copy()
     operators.crossover(a, b, rng, limits)
-    kind.mutate(a, rng, 1.0, limits, None)
+    shape.mutate(a, rng, 1.0, limits, None)
     assert np.array_equal(a, a0) and np.array_equal(b, b0)
     for _ in range(200):
-        a = kind.mutate(a, rng, 0.3, limits, 0.5)
+        a = shape.mutate(a, rng, 0.3, limits, 0.5)
         a, b = operators.crossover(a, b, rng, limits)
         for genome in (a, b):
-            assert genome.shape[1] == kind.cols and genome.dtype == np.float32
+            assert genome.shape[1] == shape.cols and genome.dtype == np.float32
             assert limits.min_elements <= len(genome) <= limits.max_elements
-            values = genome[:, 1:] if kind.name == "polygon" else genome  # a polygon row starts with its vertex count
+            values = genome[:, 1:] if shape.name == "polygon" else genome  # a polygon row starts with its vertex count
             assert np.all((values >= 0) & (values <= 1))
-    assert kind.describe(a).count("\n") == len(a) - 1
+    assert shape.describe(a).count("\n") == len(a) - 1
 
 
-@KIND_PARAMS
-def test_every_kind_renders_an_empty_genome_as_the_background(kind):
-    image = render(kind.empty_genome(), 4, 3, (0.2, 0.4, 0.6), kind)
+@SHAPE_PARAMS
+def test_every_shape_renders_an_empty_genome_as_the_background(shape):
+    image = render(shape.empty_genome(), 4, 3, (0.2, 0.4, 0.6), shape)
     assert image.shape == (3, 4, 3) and image[0, 0].tolist() == pytest.approx([0.2, 0.4, 0.6])
 
 
@@ -278,7 +280,7 @@ def test_numba_discs_match_pillow():
 
 def test_disc_operators_respect_the_size_limits():
     limits = Limits(max_elements=15, max_size=0.2, min_size=0.04, min_alpha=0.1, max_alpha=0.9)
-    problem = ImageProblem(gradient_target(), limits, 8, kind=DISC)
+    problem = ImageProblem(gradient_target(), limits, 8, shape=DISC)
     rng = Random(2)
     genome = problem.random_genome(rng)
     for _ in range(300):
@@ -296,12 +298,12 @@ def test_disc_row_layout_is_the_documented_one():
     assert discs.describe(np.stack([row])) == "#0 disc (0.10,0.20) radius 0.300 rgba(0.40,0.50,0.60,0.70)"
 
 
-def test_command_line_runs_every_kind(tmp_path):
+def test_command_line_runs_every_shape(tmp_path):
     from carmelolg.gapoly.cli import main
 
     photo = tmp_path / "photo.png"
     Image.fromarray((gradient_target(32) * 255).astype(np.uint8), "RGB").save(photo)
-    for name in KINDS:
+    for name in SHAPES:
         out = tmp_path / name
         assert main([str(photo), "--shape", name, "--generations", "6", "--population", "8", "--size", "24",
                      "--elements", "30", "--snapshot-every", "3", "--workers", "1", "--seed", "1", "--out", str(out)]) == 0
@@ -359,3 +361,20 @@ def test_voronoi_row_layout_is_the_documented_one():
     assert voronoi.COLS == 5 and (voronoi.X, voronoi.Y, voronoi.RED, voronoi.BLUE) == (0, 1, 2, 4)
     assert row.tolist() == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])
     assert voronoi.describe(np.stack([row])) == "#0 seed (0.10,0.20) rgb(0.30,0.40,0.50)"
+
+
+def test_shapes_are_strategies_registered_under_their_cli_name():
+    assert set(SHAPES) == {"polygon", "disc", "voronoi"}
+    for name, shape in SHAPES.items():
+        assert isinstance(shape, Shape) and shape.name == name
+    with pytest.raises(TypeError):
+        Shape()  # the interface cannot be instantiated: each shape implements it
+
+
+def test_removed_command_line_options_are_gone(tmp_path, capsys):
+    from carmelolg.gapoly.cli import main
+
+    for option in ("--polygons", "--points", "--initial-elements", "--parallel", "--history-every"):
+        with pytest.raises(SystemExit):
+            main([str(tmp_path / "photo.png"), option, "1"])
+        assert "unrecognized arguments" in capsys.readouterr().err

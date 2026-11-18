@@ -1,7 +1,14 @@
-"""Limits shared by every kind of element (polygon, disc, Voronoi point)."""
+"""Types and limits shared by every shape."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+import numpy as np
+from numpy.typing import NDArray
+
+Genome = NDArray[np.float32]  # (elements, columns), one row per element
+Row = NDArray[np.float32]  # one element
+Array = NDArray[np.float32]  # an RGB image in [0, 1], shape (height, width, 3)
 
 
 @dataclass(frozen=True)

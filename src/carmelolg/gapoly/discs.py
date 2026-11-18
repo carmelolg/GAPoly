@@ -19,18 +19,15 @@ from random import Random
 
 import numpy as np
 from numba import njit
-from numpy.typing import NDArray
 
-from .fast_render import canvas_mse, fill
-from .limits import Limits, clamp
+from .common import Array, Genome, Limits, Row, clamp
+from .kernels import canvas_mse, fill
 from .operators import mutate_rows
+from .shape import Shape
 
 X, Y, RADIUS = 0, 1, 2
 RED, GREEN, BLUE, ALPHA = 3, 4, 5, 6
 COLS = 7
-
-Genome = NDArray[np.float32]
-Row = NDArray[np.float32]
 
 _MIN_RADIUS_PX = 0.7072  # a disc always reaches the centre of the pixel it sits in (half the pixel diagonal)
 
@@ -46,11 +43,6 @@ def describe(genome: Genome) -> str:
         f"#{k} disc ({row[X]:.2f},{row[Y]:.2f}) radius {row[RADIUS]:.3f} "
         f"rgba({row[RED]:.2f},{row[GREEN]:.2f},{row[BLUE]:.2f},{row[ALPHA]:.2f})"
         for k, row in enumerate(genome))
-
-
-def extent(row: Row) -> float:
-    """Diameter, as a fraction of the longest image side."""
-    return float(2 * row[RADIUS])
 
 
 def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
@@ -141,3 +133,29 @@ def render_image(genome: np.ndarray, width: int, height: int, background: np.nda
     canvas = np.empty((height, width, 3), dtype=np.float32)
     render_into(np.ascontiguousarray(genome, dtype=np.float32), background, canvas)
     return canvas
+
+
+class DiscShape(Shape):
+    name = "disc"
+    plural = "discs"
+    cols = COLS
+    uses_size = True
+    default_elements = 2000
+    default_initial = 200
+
+    def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
+        return float(render_mse(genome, target, background))
+
+    def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
+        return render_image(genome, width, height, background)
+
+    def random_row(self, rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
+                   center: tuple[float, float] | None = None) -> Row:
+        return random_row(rng, limits, rgb, center)
+
+    def mutate(self, genome: Genome, rng: Random, rate: float, limits: Limits,
+               per_element: float | None = None) -> Genome:
+        return mutate(genome, rng, rate, limits, per_element)
+
+    def describe(self, genome: Genome) -> str:
+        return describe(genome)

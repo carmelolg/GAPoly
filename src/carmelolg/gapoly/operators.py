@@ -1,4 +1,4 @@
-"""Mutation and crossover on array genomes, for every kind. Inputs are never modified."""
+"""Mutation and crossover on array genomes, for every shape. Inputs are never modified."""
 from __future__ import annotations
 
 import math
@@ -7,8 +7,7 @@ from random import Random
 
 import numpy as np
 
-from .limits import Limits, clamp
-from .shapes import ALPHA, GREEN, N_VERTICES, RED, Genome, X, Y, extent, random_row
+from .common import Genome, Limits
 
 
 def _selected(rng: Random, count: int, probability: float) -> list[int]:
@@ -26,38 +25,15 @@ def _selected(rng: Random, count: int, probability: float) -> list[int]:
         picked.append(i)
 
 
-def move_vertex(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.015) -> None:
-    """Move one vertex in place (``row`` is a private copy); undone if the polygon would grow past the cap."""
-    before, old = row.copy(), extent(row)
-    v = rng.randrange(int(row[N_VERTICES]))
-    row[X(v)] = clamp(float(row[X(v)]) + rng.gauss(0, sigma))
-    row[Y(v)] = clamp(float(row[Y(v)]) + rng.gauss(0, sigma))
-    if extent(row) > max(limits.max_size, old):  # never grow past the cap
-        row[:] = before
-
-
-def shift_polygon(row: np.ndarray, rng: Random, sigma: float = 0.02) -> None:
-    dx, dy = rng.gauss(0, sigma), rng.gauss(0, sigma)
-    for v in range(int(row[N_VERTICES])):
-        row[X(v)] = clamp(float(row[X(v)]) + dx)
-        row[Y(v)] = clamp(float(row[Y(v)]) + dy)
-
-
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in range(RED, GREEN + 2):  # red, green, blue
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-    row[ALPHA] = clamp(float(row[ALPHA]) + rng.gauss(0, sigma), limits.min_alpha, limits.max_alpha)
-
-
 def mutate_rows(genome: Genome, rng: Random, rate: float, limits: Limits, per_row: float | None,
                 edit_shape: Callable[[np.ndarray, Random, Limits], None],
                 edit_color: Callable[[np.ndarray, Random, Limits], None],
                 new_row: Callable[[Random, Limits], np.ndarray], reorder: bool = True) -> Genome:
-    """The mutation shared by every kind of element.
+    """The mutation shared by every shape.
 
     ``per_row``: probability that each element changes shape / colour (default ``rate``).
     ``rate``: probability, per genome, of each add / remove / reorder operation. ``edit_shape``, ``edit_color``
-    change one row in place (a private copy); ``new_row`` makes a fresh element. ``reorder=False`` for kinds where
+    change one row in place (a private copy); ``new_row`` makes a fresh element. ``reorder=False`` for shapes where
     the drawing order does not matter (Voronoi points).
     """
     g = genome.copy()
@@ -75,19 +51,6 @@ def mutate_rows(genome: Genome, rng: Random, rate: float, limits: Limits, per_ro
         row = g[source].copy()
         g = np.insert(np.delete(g, source, axis=0), rng.randrange(len(g)), row, axis=0)
     return g
-
-
-def _edit_polygon(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    if rng.random() < 0.7:
-        move_vertex(row, rng, limits)
-    else:
-        shift_polygon(row, rng)
-
-
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_polygon: float | None = None) -> Genome:
-    """Polygon mutation: see ``mutate_rows``."""
-    return mutate_rows(genome, rng, rate, limits, per_polygon, _edit_polygon, change_color,
-                       lambda r, lim: random_row(r, lim))
 
 
 def crossover(a: Genome, b: Genome, rng: Random, limits: Limits) -> tuple[Genome, Genome]:
