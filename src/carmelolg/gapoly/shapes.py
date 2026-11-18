@@ -1,4 +1,4 @@
-"""Genome layout and limits.
+"""Polygon genome layout.
 
 A genome is a float32 array of shape ``(polygons, COLS)``: one row per polygon, drawn top to bottom in row
 order (later rows on top). Every value is in [0, 1]; coordinates are fractions of the image side, so a genome
@@ -21,11 +21,12 @@ Never index a row with bare numbers: use ``N_VERTICES``, ``X(v)``, ``Y(v)``, ``R
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from random import Random
 
 import numpy as np
 from numpy.typing import NDArray
+
+from .limits import Limits, clamp
 
 MAX_VERTICES = 6
 
@@ -47,21 +48,6 @@ def X(vertex: int) -> int:
 def Y(vertex: int) -> int:
     """Column of the y coordinate of vertex number ``vertex`` (0-based)."""
     return VERTEX_START + 2 * vertex + 1
-
-
-@dataclass(frozen=True)
-class Limits:
-    min_polygons: int = 1
-    max_polygons: int = 150
-    min_vertices: int = 3
-    max_vertices: int = MAX_VERTICES
-    min_alpha: float = 0.05
-    max_alpha: float = 0.95
-    max_size: float = 0.12  # max width / height of a polygon, as a fraction of the image side
-
-
-def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
-    return low if value < low else min(value, high)
 
 
 def empty_genome() -> Genome:

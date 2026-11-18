@@ -9,15 +9,20 @@ from carmelolg.galib import GenerationStats, GeneticAlgorithm, PrintProgress
 from PIL import Image, ImageOps
 
 from .help_format import colorize, use_color
-from .problem import PolygonProblem
-from .shapes import Limits
+from .kinds import Kind
+from .limits import Limits
+from .problem import ImageProblem
 from .viewer import LiveView, SizeSchedule, Snapshots
 
 
 class Progress(PrintProgress):
+    def __init__(self, kind: Kind, every: int = 1) -> None:
+        super().__init__(every=every)
+        self.kind = kind
+
     def format_line(self, stats: GenerationStats) -> str:
         return (f"gen {stats.generation:6d} | best mse {stats.best_fitness:.5f} | "
-                f"mean {stats.mean_fitness:.5f} | polygons {len(stats.best_genome)}")
+                f"mean {stats.mean_fitness:.5f} | {self.kind.plural} {len(stats.best_genome)}")
 
 
 def load_target(path: Path, size: int) -> np.ndarray:
@@ -139,9 +144,9 @@ def main(argv: list[str] | None = None) -> int:
 
     out = args.out or Path("out") / args.target.stem
     out.mkdir(parents=True, exist_ok=True)
-    problem = PolygonProblem(load_target(args.target, args.size), Limits(max_polygons=args.polygons, max_size=max(args.start_size, args.max_size)),
+    problem = ImageProblem(load_target(args.target, args.size), Limits(max_elements=args.polygons, max_size=max(args.start_size, args.max_size)),
                               args.initial_polygons, args.mutations_per_child)
-    callbacks = [Progress(every=50), Snapshots(problem, out, args.snapshot_every, args.output_width),
+    callbacks = [Progress(problem.kind, every=50), Snapshots(problem, out, args.snapshot_every, args.output_width),
                  SizeSchedule(problem, args.max_size, args.generations)]
     if args.live:
         callbacks.append(LiveView(problem, args.live_every))

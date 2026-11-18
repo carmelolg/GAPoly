@@ -12,7 +12,6 @@ from PIL import Image
 
 from .problem import PolygonProblem
 from .render import to_image
-from .shapes import empty_genome
 
 
 class SizeSchedule(Callback):
@@ -54,7 +53,7 @@ class Snapshots(Callback):
     def on_start(self, engine: GeneticAlgorithm[Any]) -> None:
         self._csv_file = open(self.out_dir / "history.csv", "w", newline="")  # noqa: SIM115 (closed in on_end)
         self._csv = csv.writer(self._csv_file)
-        self._csv.writerow(["generation", "best_mse", "mean_mse", "polygons"])
+        self._csv.writerow(["generation", "best_mse", "mean_mse", "elements"])
 
     def on_generation(self, stats: GenerationStats[Any], engine: GeneticAlgorithm[Any]) -> None:
         self._csv.writerow([stats.generation, stats.best_fitness, stats.mean_fitness, len(stats.best_genome)])
@@ -101,7 +100,7 @@ class LiveView(Callback):
         a_target.set_title("target")
         self.a_best.axis("off")
         a_target.axis("off")
-        self.image = self.a_best.imshow(problem.render(empty_genome()))
+        self.image = self.a_best.imshow(problem.render(problem.kind.empty_genome()))
         self.a_curve.set_xlabel("generation")
         self.a_curve.set_ylabel("MSE")
         (self.line,) = self.a_curve.plot([], [])
@@ -114,7 +113,8 @@ class LiveView(Callback):
         if stats.generation % self.every:
             return
         self.image.set_data(self.problem.render(stats.best_genome))
-        self.a_best.set_title(f"generation {stats.generation}  mse {stats.best_fitness:.5f}  polygons {len(stats.best_genome)}")
+        plural = self.problem.kind.plural
+        self.a_best.set_title(f"generation {stats.generation}  mse {stats.best_fitness:.5f}  {plural} {len(stats.best_genome)}")
         self.line.set_data(self.x, self.y)
         self.a_curve.relim()
         self.a_curve.autoscale_view()

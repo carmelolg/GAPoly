@@ -73,15 +73,15 @@ def test_fitness_zero_for_perfect_and_better_when_closer():
 
 
 def test_fitness_equals_numpy_mse_of_the_render():
-    problem = PolygonProblem(gradient_target(), Limits(max_size=0.5), initial_polygons=10)
+    problem = PolygonProblem(gradient_target(), Limits(max_size=0.5), initial_elements=10)
     genome = problem.random_genome(Random(3))
     expected = float(np.mean((problem.render(genome) - problem.target) ** 2))
     assert problem.fitness(genome) == pytest.approx(expected, rel=1e-4)
 
 
 def test_operators_keep_genome_valid_and_inputs_untouched():
-    limits = Limits(max_polygons=12)
-    problem = PolygonProblem(gradient_target(), limits, initial_polygons=6)
+    limits = Limits(max_elements=12)
+    problem = PolygonProblem(gradient_target(), limits, initial_elements=6)
     rng = Random(1)
     a, b = problem.random_genome(rng), problem.random_genome(rng)
     a0, b0 = a.copy(), b.copy()
@@ -93,7 +93,7 @@ def test_operators_keep_genome_valid_and_inputs_untouched():
         a, b = operators.crossover(a, b, rng, limits)
         for genome in (a, b):
             assert genome.shape[1] == COLS and genome.dtype == np.float32
-            assert limits.min_polygons <= len(genome) <= limits.max_polygons
+            assert limits.min_elements <= len(genome) <= limits.max_elements
             for r in genome:
                 xs, ys = vertices(r)
                 assert limits.min_vertices <= len(xs) <= limits.max_vertices
@@ -104,7 +104,7 @@ def test_operators_keep_genome_valid_and_inputs_untouched():
 
 
 def run(seed: int, **kwargs):
-    problem = PolygonProblem(gradient_target(), Limits(max_polygons=20), initial_polygons=5)
+    problem = PolygonProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     return GeneticAlgorithm(problem, population_size=16, max_generations=40, mutation_rate=0.1, seed=seed,
                             diversity=None, **kwargs).run()
 
@@ -153,7 +153,7 @@ def test_describe_prints_one_line_per_polygon():
 
 
 def test_history_genome_every_keeps_stats_but_drops_most_genomes():
-    problem = PolygonProblem(gradient_target(), Limits(max_polygons=20), initial_polygons=5)
+    problem = PolygonProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     result = GeneticAlgorithm(problem, population_size=10, max_generations=25, seed=2, diversity=None,
                               history_genome_every=10).run()
     assert len(result.history) == 26
@@ -168,7 +168,7 @@ def test_snapshots_write_png_csv_and_gif_from_disk(tmp_path):
 
     from carmelolg.gapoly.viewer import Snapshots
 
-    problem = PolygonProblem(gradient_target(), Limits(max_polygons=20), initial_polygons=5)
+    problem = PolygonProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     snapshots = Snapshots(problem, tmp_path, every=5, output_width=64, frame_width=32)
     GeneticAlgorithm(problem, population_size=10, max_generations=12, seed=2, diversity=None,
                      callbacks=[snapshots]).run()
@@ -178,4 +178,4 @@ def test_snapshots_write_png_csv_and_gif_from_disk(tmp_path):
     with Image.open(tmp_path / "evolution.gif") as gif:
         assert gif.n_frames == len(pngs) + 1 and gif.size == (32, 32)  # snapshots + final
     rows = (tmp_path / "history.csv").read_text().splitlines()
-    assert rows[0] == "generation,best_mse,mean_mse,polygons" and len(rows) == 14  # header + generations 0..12
+    assert rows[0] == "generation,best_mse,mean_mse,elements" and len(rows) == 14  # header + generations 0..12

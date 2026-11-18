@@ -1,12 +1,14 @@
-"""Mutation and crossover on array genomes. Inputs are never modified."""
+"""Mutation and crossover on array genomes, for every kind. Inputs are never modified."""
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from random import Random
 
 import numpy as np
 
-from .shapes import ALPHA, GREEN, N_VERTICES, RED, Genome, Limits, X, Y, clamp, extent, random_row
+from .limits import Limits, clamp
+from .shapes import ALPHA, GREEN, N_VERTICES, RED, Genome, X, Y, extent, random_row
 
 
 def _selected(rng: Random, count: int, probability: float) -> list[int]:
@@ -47,36 +49,54 @@ def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.
     row[ALPHA] = clamp(float(row[ALPHA]) + rng.gauss(0, sigma), limits.min_alpha, limits.max_alpha)
 
 
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_polygon: float | None = None) -> Genome:
-    """``per_polygon``: probability that each polygon changes shape / colour (default ``rate``).
-    ``rate``: probability, per genome, of each add / remove / reorder operation."""
+def mutate_rows(genome: Genome, rng: Random, rate: float, limits: Limits, per_row: float | None,
+                edit_shape: Callable[[np.ndarray, Random, Limits], None],
+                edit_color: Callable[[np.ndarray, Random, Limits], None],
+                new_row: Callable[[Random, Limits], np.ndarray], reorder: bool = True) -> Genome:
+    """The mutation shared by every kind of element.
+
+    ``per_row``: probability that each element changes shape / colour (default ``rate``).
+    ``rate``: probability, per genome, of each add / remove / reorder operation. ``edit_shape``, ``edit_color``
+    change one row in place (a private copy); ``new_row`` makes a fresh element. ``reorder=False`` for kinds where
+    the drawing order does not matter (Voronoi points).
+    """
     g = genome.copy()
-    p = rate if per_polygon is None else per_polygon
+    p = rate if per_row is None else per_row
     for k in _selected(rng, len(g), p):
-        if rng.random() < 0.7:
-            move_vertex(g[k], rng, limits)
-        else:
-            shift_polygon(g[k], rng)
+        edit_shape(g[k], rng, limits)
     for k in _selected(rng, len(g), p):
-        change_color(g[k], rng, limits)
-    if rng.random() < rate and len(g) < limits.max_polygons:
-        g = np.insert(g, rng.randrange(len(g) + 1), random_row(rng, limits), axis=0)
-    if rng.random() < rate and len(g) > limits.min_polygons:
+        edit_color(g[k], rng, limits)
+    if rng.random() < rate and len(g) < limits.max_elements:
+        g = np.insert(g, rng.randrange(len(g) + 1), new_row(rng, limits), axis=0)
+    if rng.random() < rate and len(g) > limits.min_elements:
         g = np.delete(g, rng.randrange(len(g)), axis=0)
-    if rng.random() < rate and len(g) > 1:  # change overlap order
+    if reorder and rng.random() < rate and len(g) > 1:  # change overlap order
         source = rng.randrange(len(g))
         row = g[source].copy()
         g = np.insert(np.delete(g, source, axis=0), rng.randrange(len(g)), row, axis=0)
     return g
 
 
+def _edit_polygon(row: np.ndarray, rng: Random, limits: Limits) -> None:
+    if rng.random() < 0.7:
+        move_vertex(row, rng, limits)
+    else:
+        shift_polygon(row, rng)
+
+
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_polygon: float | None = None) -> Genome:
+    """Polygon mutation: see ``mutate_rows``."""
+    return mutate_rows(genome, rng, rate, limits, per_polygon, _edit_polygon, change_color,
+                       lambda r, lim: random_row(r, lim))
+
+
 def crossover(a: Genome, b: Genome, rng: Random, limits: Limits) -> tuple[Genome, Genome]:
-    """Swap tails of the two polygon lists (cut points differ per parent, so lengths change)."""
+    """Swap tails of the two element lists (cut points differ per parent, so lengths change)."""
     cut_a, cut_b = rng.randint(0, len(a)), rng.randint(0, len(b))
     return (_fit(np.concatenate((a[:cut_a], b[cut_b:])), a, limits),
             _fit(np.concatenate((b[:cut_b], a[cut_a:])), b, limits))
 
 
 def _fit(child: Genome, fallback: Genome, limits: Limits) -> Genome:
-    child = child[: limits.max_polygons]
-    return child if len(child) >= limits.min_polygons else fallback.copy()
+    child = child[: limits.max_elements]
+    return child if len(child) >= limits.min_elements else fallback.copy()

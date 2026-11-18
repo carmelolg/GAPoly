@@ -5,15 +5,16 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
-from .fast_render import render_image
+from .kinds import POLYGON, Kind
 from .shapes import Genome
 
 Array = NDArray[np.float32]
 
 
-def render(genome: Genome, width: int, height: int, background: tuple[float, float, float]) -> Array:
+def render(genome: Genome, width: int, height: int, background: tuple[float, float, float],
+           kind: Kind = POLYGON) -> Array:
     """RGB float32 image in [0, 1], shape (height, width, 3)."""
-    return render_image(genome, width, height, np.asarray(background, dtype=np.float32))
+    return kind.render_image(genome, width, height, np.asarray(background, dtype=np.float32))
 
 
 def to_image(array: Array) -> Image.Image:

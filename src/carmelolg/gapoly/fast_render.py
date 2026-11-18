@@ -1,4 +1,4 @@
-"""Numba rasteriser: draws a whole genome in one compiled loop (no Python per polygon, no allocations).
+"""Numba rasteriser for polygons: draws a whole genome in one compiled loop (no Python per polygon, no allocations).
 
 Pixels are sampled at their centres and a polygon covers a pixel by the even-odd rule. The kernels release the
 GIL (``nogil``), so threads evaluate several genomes in parallel.
@@ -59,11 +59,29 @@ def _draw(genome, canvas):  # type: ignore[no-untyped-def]
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]
+def fill(canvas, background):  # type: ignore[no-untyped-def]
+    """Paint the whole canvas with the background colour (shared by every kind of element)."""
     for y in range(canvas.shape[0]):
         for x in range(canvas.shape[1]):
             for c in range(3):
                 canvas[y, x, c] = background[c]
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def canvas_mse(canvas, target):  # type: ignore[no-untyped-def]
+    """Mean squared error between two float32 (h, w, 3) images."""
+    total = 0.0
+    for y in range(target.shape[0]):
+        for x in range(target.shape[1]):
+            for c in range(3):
+                d = canvas[y, x, c] - target[y, x, c]
+                total += d * d
+    return total / target.size
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]
+    fill(canvas, background)
     _draw(genome, canvas)
 
 
@@ -72,13 +90,7 @@ def render_mse(genome, target, background):  # type: ignore[no-untyped-def]
     """Mean squared error between the rendered genome and ``target`` (float32, (h, w, 3))."""
     canvas = np.empty_like(target)
     render_into(genome, background, canvas)
-    total = 0.0
-    for y in range(target.shape[0]):
-        for x in range(target.shape[1]):
-            for c in range(3):
-                d = canvas[y, x, c] - target[y, x, c]
-                total += d * d
-    return total / target.size
+    return canvas_mse(canvas, target)
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray) -> np.ndarray:
