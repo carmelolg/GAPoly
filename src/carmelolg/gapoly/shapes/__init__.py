@@ -1,9 +1,9 @@
 """The shapes an image can be made of, by name (the values of ``--shape``)."""
 from __future__ import annotations
 
+from ..core.shape import Shape
 from .discs import DiscShape
 from .polygons import PolygonShape
-from .shape import Shape
 from .voronoi import VoronoiShape
 
 POLYGON, DISC, VORONOI = PolygonShape(), DiscShape(), VoronoiShape()

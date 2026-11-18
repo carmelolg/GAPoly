@@ -6,9 +6,9 @@ from random import Random
 import numpy as np
 from carmelolg.galib import Problem
 
-from . import operators
-from .common import Array, Genome, Limits
-from .shape import Shape
+from .core import operators
+from .core.common import Array, Genome, Limits
+from .core.shape import Shape
 from .shapes import POLYGON
 
 

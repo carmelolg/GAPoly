@@ -8,12 +8,12 @@ import numpy as np
 from carmelolg.galib import GenerationStats, GeneticAlgorithm, PrintProgress
 from PIL import Image, ImageOps
 
-from .common import Limits
+from ..callbacks import LiveView, SizeSchedule, Snapshots
+from ..core.common import Limits
+from ..core.shape import Shape
+from ..problem import ImageProblem
+from ..shapes import SHAPES
 from .help_format import colorize, use_color
-from .problem import ImageProblem
-from .shape import Shape
-from .shapes import SHAPES
-from .viewer import LiveView, SizeSchedule, Snapshots
 
 
 class Progress(PrintProgress):

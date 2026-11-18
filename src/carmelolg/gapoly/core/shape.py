@@ -1,8 +1,8 @@
 """The Strategy interface: how a genome is read as an image.
 
 A shape knows the layout of one genome row, how to draw a genome (a Numba kernel), how to create and mutate
-elements. The problem, the viewer and the command line only talk to this interface, so adding a shape means
-writing one module and registering it in ``shapes.py``.
+elements. The problem, the callbacks and the command line only talk to this interface, so adding a shape means
+writing one module and registering it in ``shapes/__init__.py``.
 """
 from __future__ import annotations
 

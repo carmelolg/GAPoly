@@ -6,8 +6,10 @@ import pytest
 from carmelolg.galib import GeneticAlgorithm
 from PIL import Image, ImageDraw
 
-from carmelolg.gapoly import SHAPES, ImageProblem, Limits, Shape, discs, operators, polygons, voronoi
-from carmelolg.gapoly.polygons import (
+from carmelolg.gapoly import SHAPES, ImageProblem, Limits, Shape
+from carmelolg.gapoly.core import operators
+from carmelolg.gapoly.shapes import DISC, POLYGON, VORONOI, discs, polygons, voronoi
+from carmelolg.gapoly.shapes.polygons import (
     ALPHA,
     COLS,
     N_VERTICES,
@@ -21,7 +23,6 @@ from carmelolg.gapoly.polygons import (
     random_row,
     vertices,
 )
-from carmelolg.gapoly.shapes import DISC, POLYGON, VORONOI
 
 SQUARE = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
 
@@ -169,7 +170,7 @@ def test_history_genome_every_keeps_stats_but_drops_most_genomes():
 def test_snapshots_write_png_csv_and_gif_from_disk(tmp_path):
     from PIL import Image
 
-    from carmelolg.gapoly.viewer import Snapshots
+    from carmelolg.gapoly.callbacks import Snapshots
 
     problem = ImageProblem(gradient_target(), Limits(max_elements=20), initial_elements=5)
     snapshots = Snapshots(problem, tmp_path, every=5, output_width=64, frame_width=32)

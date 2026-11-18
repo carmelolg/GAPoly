@@ -21,10 +21,10 @@ from random import Random
 import numpy as np
 from numba import njit
 
-from .common import Array, Genome, Limits, Row, clamp
-from .kernels import canvas_mse, fill
-from .operators import mutate_rows
-from .shape import Shape
+from ..core.common import Array, Genome, Limits, Row, clamp
+from ..core.kernels import canvas_mse, fill
+from ..core.operators import mutate_rows
+from ..core.shape import Shape
 
 X, Y = 0, 1
 RED, GREEN, BLUE = 2, 3, 4

@@ -19,11 +19,10 @@ Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI
 | `disc` | disc, from one pixel up to a group of pixels | 7 columns: `x y radius r g b a` | 2000 |
 | `voronoi` | seed of a Voronoi cell: each pixel takes the colour of its nearest seed | 5 columns: `x y r g b` | 1000 |
 
-Each shape is a strategy: `shape.py` defines the abstract `Shape` (draw a genome, error against the target, create and
-mutate elements, describe) and `polygons.py`, `discs.py` and `voronoi.py` implement it, each with its genome layout,
-Numba rasteriser and mutations. `shapes.py` registers them by name (the values of `--shape`); the problem, the viewer and the
-command line only use the interface. `common.py` has `Limits` and the types, `operators.py` the mutation and crossover
-shared by every shape, `kernels.py` the Numba helpers they share. A disc is never smaller than the pixel under its
+Each shape is a strategy: the abstract `Shape` (draw a genome, error against the target, create and mutate elements,
+describe) is implemented by `PolygonShape`, `DiscShape` and `VoronoiShape`, and `shapes/__init__.py` registers them by name
+(the values of `--shape`). The problem, the callbacks and the command line only use the interface (see "Project layout").
+A disc is never smaller than the pixel under its
 centre, and its radius is a fraction of the longest image side, so discs stay round at any resolution.
 Voronoi seeds have no size, alpha or drawing order, so `--start-size` and `--max-size` do nothing for them. The rasteriser finds the nearest seed with a grid, exactly and in time close to the number of pixels: 20000 seeds on a 512x341 image take about 10 ms.
 
@@ -38,8 +37,8 @@ meaning:  n | x0  y0  x1  y1  ...    x5  y5 |  r   g   b   a
 ```
 
 `n` is the number of vertices used (3-6), the rest are ignored. Do not index rows with bare numbers: use the names
-in `polygons.py` (`N_VERTICES`, `X(v)`, `Y(v)`, `RED`..`ALPHA`, `vertices`, `color`, `make_row`).
-`describe(genome)` prints a genome as text, one line per polygon. The numba kernel (`polygons.py`) reads the
+in `shapes/polygons.py` (`N_VERTICES`, `X(v)`, `Y(v)`, `RED`..`ALPHA`, `vertices`, `color`, `make_row`).
+`describe(genome)` prints a genome as text, one line per polygon. The numba kernel (in the same module) reads the
 same layout; `test_row_layout_is_the_documented_one` fails if the columns change.
 
 ## Setup
@@ -55,6 +54,27 @@ From a clone (development):
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[live,dev]"
 ```
+
+## Project layout
+
+```
+src/carmelolg/gapoly/
+  problem.py        ImageProblem: the GALib Problem (fitness = MSE against the target), works with any Shape
+  core/             what every shape shares
+    shape.py          Shape, the Strategy interface
+    common.py         Limits, clamp, Genome / Row / Array types
+    operators.py      mutation skeleton and crossover used by every shape
+    kernels.py        Numba helpers (fill, MSE)
+  shapes/           one module per way of reading the genome: layout, Numba rasteriser, mutations, Shape class
+    __init__.py       SHAPES, the registry (values of --shape)
+    polygons.py  discs.py  voronoi.py
+  callbacks/        GALib callbacks: snapshots.py (PNG, CSV, GIF), live.py (matplotlib), schedule.py (size cap)
+  cli/              app.py (arguments, help text, main), help_format.py (colours)
+tests/test_gapoly.py
+```
+
+To add a shape: write a module in `shapes/` with the layout, kernel, operators and a `Shape` subclass, and add it to
+`shapes/__init__.py`.
 
 ## Run
 
