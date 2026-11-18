@@ -1,0 +1,33 @@
+# Opens and updates a "release PR" from the Conventional Commits on main.
+# Merging that PR bumps the version (pyproject.toml, __version__), updates CHANGELOG.md,
+# creates the git tag and the GitHub release, then starts the Publish workflow (PyPI).
+# Prerequisite, once: repository Settings > Actions > General > Workflow permissions >
+# enable "Allow GitHub Actions to create and approve pull requests".
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      # A release created with GITHUB_TOKEN does not trigger "release: published" workflows,
+      # but workflow_dispatch is allowed.
+      - name: Start the PyPI publication
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
