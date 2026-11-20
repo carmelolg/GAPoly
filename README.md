@@ -9,6 +9,12 @@
   </tr>
 </table>
 
+[![PyPI](https://img.shields.io/pypi/v/carmelolg-gapoly)](https://pypi.org/project/carmelolg-gapoly/)
+[![Python](https://img.shields.io/pypi/pyversions/carmelolg-gapoly)](https://pypi.org/project/carmelolg-gapoly/)
+[![Pages](https://github.com/carmelolg/GAPoly/actions/workflows/pages.yml/badge.svg)](https://github.com/carmelolg/GAPoly/actions/workflows/pages.yml)
+[![Publish](https://github.com/carmelolg/GAPoly/actions/workflows/publish.yml/badge.svg)](https://github.com/carmelolg/GAPoly/actions/workflows/publish.yml)
+[![Gallery](https://img.shields.io/badge/gallery-carmelolg.github.io%2FGAPoly-blue)](https://carmelolg.github.io/GAPoly/)
+
 GAPoly = GA + polygons (distribution `carmelolg-gapoly`, import `carmelolg.gapoly`, command `gapoly`).
 
 Genetic algorithm that evolves elements until, stacked, they look like a target photo.
