@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.2...carmelolg-gapoly-v0.3.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* declare supported Python versions ([6966ed5](https://github.com/carmelolg/GAPoly/commit/6966ed5eda19ace8bd1c24247cb74073ad511766))
+
 ## [0.3.2](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.1...carmelolg-gapoly-v0.3.2) (2026-11-20)
 
 
