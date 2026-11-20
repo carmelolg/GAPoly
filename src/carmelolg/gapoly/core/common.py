@@ -16,8 +16,9 @@ class Limits:
     """Bounds that mutation and crossover keep.
 
     ``max_size`` is the largest extent of one element as a fraction of the image side: the width or height of a
-    polygon, the diameter of a disc (Voronoi points have no size). ``min_size`` is the smallest diameter of a disc.
-    The vertex limits only matter for polygons, the alpha limits for polygons and discs.
+    polygon or of a stroke, the diameter of a disc or of a mosaic tile, the box of a glyph (Voronoi points have no size).
+    ``min_size`` is the smallest diameter of a disc or tile, the smallest box of a glyph, the thinnest brush of a stroke.
+    The vertex limits only matter for polygons, the alpha limits for every shape but Voronoi points and mosaic tiles.
     """
 
     min_elements: int = 1

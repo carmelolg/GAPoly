@@ -1,3 +1,4 @@
+import itertools
 import re
 from random import Random
 
@@ -8,7 +9,20 @@ from PIL import Image, ImageDraw
 
 from carmelolg.gapoly import SHAPES, ImageProblem, Limits, Shape
 from carmelolg.gapoly.core import operators
-from carmelolg.gapoly.shapes import DISC, POLYGON, VORONOI, discs, polygons, voronoi
+from carmelolg.gapoly.shapes import (
+    DISC,
+    GLYPH,
+    MOSAIC,
+    POLYGON,
+    STROKE,
+    VORONOI,
+    discs,
+    glyphs,
+    mosaic,
+    polygons,
+    strokes,
+    voronoi,
+)
 from carmelolg.gapoly.shapes.polygons import (
     ALPHA,
     COLS,
@@ -364,8 +378,203 @@ def test_voronoi_row_layout_is_the_documented_one():
     assert voronoi.describe(np.stack([row])) == "#0 seed (0.10,0.20) rgb(0.30,0.40,0.50)"
 
 
+# ---- mosaic ------------------------------------------------------------------------------------------------------
+
+def hexagon_area(radius):
+    return 1.5 * np.sqrt(3) * radius**2
+
+
+def test_mosaic_tile_is_an_opaque_regular_hexagon():
+    radius = mosaic.quantise(0.2)  # tiles are drawn at the radius of their size level
+    row = mosaic.make_row(0.5, 0.5, 0.2, (1.0, 0.0, 0.0))
+    image = render(np.stack([row]), 100, 100, (0.0, 0.0, 0.0), MOSAIC)
+    covered = image[..., 0] > 0.5
+    assert int(covered.sum()) == pytest.approx(hexagon_area(radius * 100), rel=0.05)
+    assert set(image[covered][:, 0]) == {1.0} and image[0, 0].tolist() == [0.0, 0.0, 0.0]
+
+
+def test_mosaic_tile_has_a_flat_top_and_pointed_sides():
+    row = mosaic.make_row(0.5, 0.5, 0.2, (1.0, 1.0, 1.0))
+    image = render(np.stack([row]), 100, 100, (0.0, 0.0, 0.0), MOSAIC)[..., 0] > 0.5
+    ys, xs = np.nonzero(image)
+    assert xs.max() - xs.min() > ys.max() - ys.min()  # width 2r, height sqrt(3) r
+    cy = (ys.min() + ys.max()) // 2
+    assert image[cy, xs.min() + 1] and not image[ys.min(), xs.min() + 1]  # a vertex at the side, a flat edge on top
+
+
+def test_mosaic_snaps_the_tile_to_the_lattice_so_small_moves_change_nothing():
+    here = np.stack([mosaic.make_row(0.5, 0.5, 0.2, (1.0, 0.0, 0.0))])
+    nudged = np.stack([mosaic.make_row(0.5 + 0.004, 0.5 - 0.004, 0.2, (1.0, 0.0, 0.0))])
+    black = (0.0, 0.0, 0.0)
+    assert np.array_equal(render(here, 100, 100, black, MOSAIC), render(nudged, 100, 100, black, MOSAIC))
+    cx, cy = mosaic.snap(50.0, 50.0, 20.0)
+    assert mosaic.snap(cx, cy, 20.0) == pytest.approx((cx, cy))  # a lattice node snaps to itself
+
+
+def test_mosaic_tiles_of_one_size_cover_the_image_without_gaps():
+    side = 90
+    radius = mosaic.quantise(0.06) * side
+    rows = []
+    for i in range(int(side / (1.5 * radius)) + 3):
+        for j in range(int(side / (np.sqrt(3) * radius)) + 3):
+            cx, cy = 1.5 * radius * i, np.sqrt(3) * radius * (j + 0.5 * (i % 2))
+            rows.append(mosaic.make_row(cx / side, cy / side, mosaic.quantise(0.06), (1.0, 1.0, 1.0)))
+    image = render(np.stack(rows), side, side, (0.0, 0.0, 0.0), MOSAIC)[..., 0]
+    assert (image > 0.5).mean() > 0.995  # the lattice tiles the plane (shared edges aside)
+
+
+def test_mosaic_radius_is_rounded_to_size_levels():
+    levels = {float(mosaic.quantise(r)) for r in np.linspace(0.01, 0.2, 400)}
+    assert len(levels) < 12  # a few sizes, not a continuum
+    ordered = sorted(levels)
+    assert all(b / a == pytest.approx(np.sqrt(2), rel=1e-6) for a, b in itertools.pairwise(ordered))
+
+
+def test_mosaic_operators_respect_the_size_limits():
+    limits = Limits(max_elements=15, max_size=0.2, min_size=0.04)
+    problem = ImageProblem(gradient_target(), limits, 8, shape=MOSAIC)
+    rng = Random(2)
+    genome = problem.random_genome(rng)
+    for _ in range(300):
+        genome = MOSAIC.mutate(genome, rng, 0.3, limits, 0.8)
+        radius = genome[:, mosaic.RADIUS]
+        assert np.all(radius >= limits.min_size / 2 - 1e-6) and np.all(radius <= limits.max_size / 2 + 1e-6)
+
+
+def test_mosaic_row_layout_is_the_documented_one():
+    """If this fails, update the diagram in mosaic.py and the numba kernel too."""
+    row = mosaic.make_row(0.1, 0.2, 0.3, (0.4, 0.5, 0.6))
+    assert mosaic.COLS == 6 and (mosaic.X, mosaic.Y, mosaic.RADIUS, mosaic.RED, mosaic.BLUE) == (0, 1, 2, 3, 5)
+    assert row.tolist() == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    assert mosaic.describe(np.stack([row])) == "#0 tile (0.10,0.20) radius 0.300 rgb(0.40,0.50,0.60)"
+
+
+# ---- glyphs ------------------------------------------------------------------------------------------------------
+
+def solid_masks(count=1):
+    return np.ones((count, glyphs.ATLAS_SIZE, glyphs.ATLAS_SIZE), dtype=np.float32)
+
+
+def render_glyphs(genome, width, height, background, masks):
+    return glyphs.render_image(genome, width, height, np.asarray(background, dtype=np.float32), masks)
+
+
+def test_glyph_atlas_has_ink_for_every_character():
+    masks = glyphs.atlas()
+    assert masks.shape == (len(glyphs.GLYPHS), glyphs.ATLAS_SIZE, glyphs.ATLAS_SIZE) and masks.dtype == np.float32
+    assert np.all(masks.max(axis=(1, 2)) > 0.5)  # no blank character
+    assert np.all((masks >= 0) & (masks <= 1))
+
+
+def test_glyph_box_is_a_square_of_the_given_size_so_glyphs_keep_their_shape():
+    row = glyphs.make_row(0.5, 0.5, 0.5, 0.0, 0.0, (1.0, 0.0, 0.0, 1.0))
+    image = render_glyphs(np.stack([row]), 80, 40, (0.0, 0.0, 0.0), solid_masks())  # size 0.5 of the longest side = 40 px
+    ys, xs = np.nonzero(image[..., 0] > 0.5)
+    assert xs.max() - xs.min() + 1 == 40 and ys.max() - ys.min() + 1 == 40 - 0  # the box fills the image height
+    assert image[20, 40].tolist() == [1.0, 0.0, 0.0] and image[0, 0].tolist() == [0.0, 0.0, 0.0]
+
+
+def test_glyph_rotation_turns_the_character_around_its_centre():
+    masks = solid_masks()
+    masks[0, :, glyphs.ATLAS_SIZE // 2 :] = 0.0  # ink only in the left half of the box
+    upright = np.stack([glyphs.make_row(0.5, 0.5, 0.5, 0.0, 0.0, (1.0, 1.0, 1.0, 1.0))])
+    turned = np.stack([glyphs.make_row(0.5, 0.5, 0.5, 0.5, 0.0, (1.0, 1.0, 1.0, 1.0))])  # half a turn
+    a = render_glyphs(upright, 40, 40, (0.0, 0.0, 0.0), masks)[..., 0]
+    b = render_glyphs(turned, 40, 40, (0.0, 0.0, 0.0), masks)[..., 0]
+    assert a[20, 12] > 0.9 and a[20, 28] < 0.1
+    assert b[20, 12] < 0.1 and b[20, 28] > 0.9
+
+
+def test_glyph_picks_the_character_from_the_glyph_column():
+    assert glyphs.glyph_char(0.0) == glyphs.GLYPHS[0] and glyphs.glyph_char(1.0) == glyphs.GLYPHS[-1]
+    two = np.zeros((2, glyphs.ATLAS_SIZE, glyphs.ATLAS_SIZE), dtype=np.float32)
+    two[1] = 1.0  # character 0 is blank, character 1 is solid
+    low = np.stack([glyphs.make_row(0.5, 0.5, 0.5, 0.0, 0.1, (1.0, 1.0, 1.0, 1.0))])
+    high = np.stack([glyphs.make_row(0.5, 0.5, 0.5, 0.0, 0.9, (1.0, 1.0, 1.0, 1.0))])
+    assert render_glyphs(low, 20, 20, (0.0, 0.0, 0.0), two).max() == 0.0
+    assert render_glyphs(high, 20, 20, (0.0, 0.0, 0.0), two)[10, 10, 0] == pytest.approx(1.0)
+
+
+def test_glyph_operators_respect_the_size_limits_and_keep_angle_in_a_turn():
+    limits = Limits(max_elements=15, max_size=0.2, min_size=0.04, min_alpha=0.1, max_alpha=0.9)
+    problem = ImageProblem(gradient_target(), limits, 8, shape=GLYPH)
+    rng = Random(2)
+    genome = problem.random_genome(rng)
+    for _ in range(300):
+        genome = GLYPH.mutate(genome, rng, 0.3, limits, 0.8)
+        assert np.all((genome[:, glyphs.SIZE] >= limits.min_size - 1e-6) & (genome[:, glyphs.SIZE] <= limits.max_size + 1e-6))
+        assert np.all((genome[:, glyphs.ANGLE] >= 0) & (genome[:, glyphs.ANGLE] <= 1))
+        assert np.all((genome[:, glyphs.ALPHA] >= 0.1 - 1e-6) & (genome[:, glyphs.ALPHA] <= 0.9 + 1e-6))
+
+
+def test_glyph_row_layout_is_the_documented_one():
+    """If this fails, update the diagram in glyphs.py and the numba kernel too."""
+    row = glyphs.make_row(0.1, 0.2, 0.3, 0.4, 0.0, (0.5, 0.6, 0.7, 0.8))
+    assert glyphs.COLS == 9 and (glyphs.X, glyphs.Y, glyphs.SIZE, glyphs.ANGLE, glyphs.GLYPH) == (0, 1, 2, 3, 4)
+    assert (glyphs.RED, glyphs.ALPHA) == (5, 8)
+    assert row.tolist() == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.0, 0.5, 0.6, 0.7, 0.8])
+    assert glyphs.describe(np.stack([row])) == (
+        f"#0 glyph {glyphs.GLYPHS[0]!r} (0.10,0.20) size 0.300 angle 0.40 rgba(0.50,0.60,0.70,0.80)")
+
+
+# ---- brush strokes -----------------------------------------------------------------------------------------------
+
+def brute_force_stroke_mask(start, end, half, width, height):
+    """Pixels whose centre is within ``half`` pixels of the segment ``start``-``end`` (given in pixels)."""
+    ys, xs = np.mgrid[0:height, 0:width]
+    p = np.stack([xs + 0.5, ys + 0.5], axis=-1)
+    a, b = np.asarray(start, dtype=np.float64), np.asarray(end, dtype=np.float64)
+    t = np.clip(((p - a) @ (b - a)) / ((b - a) @ (b - a)), 0.0, 1.0)
+    return np.linalg.norm(p - (a + t[..., None] * (b - a)), axis=-1) <= half
+
+
+def test_a_straight_stroke_covers_the_pixels_near_its_segment():
+    # the control point is the midpoint, so the Bezier curve is the straight segment from (8, 20) to (32, 20)
+    row = strokes.make_row((0.2, 0.5), (0.5, 0.5), (0.8, 0.5), 0.1, (1.0, 0.0, 0.0, 1.0))  # brush 0.1 of 40 px = 4 px
+    image = render(np.stack([row]), 40, 40, (0.0, 0.0, 0.0), STROKE)
+    expected = brute_force_stroke_mask((8, 20), (32, 20), 2.0, 40, 40)
+    assert np.array_equal(image[..., 0] > 0.5, expected)
+
+
+def test_a_curved_stroke_bends_towards_its_control_point():
+    row = strokes.make_row((0.2, 0.5), (0.5, 0.1), (0.8, 0.5), 0.05, (1.0, 1.0, 1.0, 1.0))
+    image = render(np.stack([row]), 100, 100, (0.0, 0.0, 0.0), STROKE)[..., 0]
+    middle = (0.5 + 2 * 0.1 + 0.5) / 4  # y of the curve at t = 1/2: (y0 + 2 * cy + y1) / 4 = 0.3
+    assert middle == pytest.approx(0.3) and image[30, 50] > 0.9  # the curve passes through (0.5, 0.3)
+    assert image[50, 50] < 0.1 and image[10, 50] < 0.1  # neither the chord nor the control point is painted
+
+
+def test_overlapping_parts_of_a_stroke_do_not_double_the_opacity():
+    loop = strokes.make_row((0.3, 0.5), (0.9, 0.5), (0.3, 0.52), 0.1, (1.0, 1.0, 1.0, 0.5))  # doubles back on itself
+    image = render(np.stack([loop]), 40, 40, (0.0, 0.0, 0.0), STROKE)[..., 0]
+    assert image.max() == pytest.approx(0.5)
+
+
+def test_stroke_operators_respect_the_size_and_width_limits():
+    limits = Limits(max_elements=15, max_size=0.2, min_size=0.02, min_alpha=0.1, max_alpha=0.9)
+    problem = ImageProblem(gradient_target(), limits, 8, shape=STROKE)
+    rng = Random(2)
+    genome = problem.random_genome(rng)
+    for _ in range(300):
+        genome = STROKE.mutate(genome, rng, 0.3, limits, 0.8)
+        assert all(strokes.extent(row) <= limits.max_size + 1e-5 for row in genome)
+        assert np.all((genome[:, strokes.WIDTH] >= limits.min_size - 1e-6)
+                      & (genome[:, strokes.WIDTH] <= limits.max_size / 3 + 1e-6))
+        assert np.all((genome[:, strokes.ALPHA] >= 0.1 - 1e-6) & (genome[:, strokes.ALPHA] <= 0.9 + 1e-6))
+
+
+def test_stroke_row_layout_is_the_documented_one():
+    """If this fails, update the diagram in strokes.py and the numba kernel too."""
+    row = strokes.make_row((0.1, 0.2), (0.3, 0.4), (0.5, 0.6), 0.7, (0.8, 0.9, 1.0, 0.5))
+    assert strokes.COLS == 11 and (strokes.X0, strokes.CX, strokes.X1, strokes.WIDTH) == (0, 2, 4, 6)
+    assert (strokes.RED, strokes.ALPHA) == (7, 10)
+    assert row.tolist() == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.5])
+    assert strokes.describe(np.stack([row])) == (
+        "#0 stroke (0.10,0.20) via (0.30,0.40) to (0.50,0.60) width 0.700 rgba(0.80,0.90,1.00,0.50)")
+
+
 def test_shapes_are_strategies_registered_under_their_cli_name():
-    assert set(SHAPES) == {"polygon", "disc", "voronoi"}
+    assert set(SHAPES) == {"polygon", "disc", "voronoi", "mosaic", "glyph", "stroke"}
     for name, shape in SHAPES.items():
         assert isinstance(shape, Shape) and shape.name == name
     with pytest.raises(TypeError):

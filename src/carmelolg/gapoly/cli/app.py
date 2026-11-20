@@ -50,11 +50,12 @@ class _Formatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescription
 HISTORY_EVERY = 1000  # genomes kept in memory in result.history: one generation in this many (history.csv has all)
 
 DESCRIPTION = """\
-Ricrea una foto con elementi semitrasparenti, usando un algoritmo genetico.
+Ricrea una foto con elementi sovrapposti, usando un algoritmo genetico.
 
 Ogni individuo è un'immagine fatta di elementi (--shape): poligoni, dischi (da un pixel a un gruppo
-di pixel) o semi di Voronoi, che dividono l'immagine in celle di colore piatto. A ogni generazione
-sopravvivono gli individui più vicini alla foto (MSE più basso), si mutano e si incrociano.
+di pixel), semi di Voronoi (che dividono l'immagine in celle di colore piatto), tessere esagonali a mosaico,
+caratteri tipografici o pennellate curve. A ogni generazione sopravvivono gli individui più vicini
+alla foto (MSE più basso), si mutano e si incrociano.
 """
 
 EPILOG = """\
@@ -65,6 +66,12 @@ Esempi:
   con i dischi:  gapoly foto.jpg --shape disc --generations 5000 --elements 4000 --size 192 \\
                      --start-size 0.3 --max-size 0.05
   a mosaico:     gapoly foto.jpg --shape voronoi --generations 5000 --elements 3000 --size 192
+  a mosaico esagonale: gapoly foto.jpg --shape mosaic --generations 5000 --elements 3000 --size 192 \\
+                     --start-size 0.1 --max-size 0.03
+  a caratteri:   gapoly foto.jpg --shape glyph --generations 5000 --elements 1500 --size 192 \\
+                     --start-size 0.2 --max-size 0.04
+  a pennellate:  gapoly foto.jpg --shape stroke --generations 5000 --elements 1500 --size 192 \\
+                     --start-size 0.3 --max-size 0.08
 
 Tempi:
   Una generazione costa circa population x elements x size². Parti da valori piccoli,
@@ -101,14 +108,20 @@ def main(argv: list[str] | None = None) -> int:
     shapes.add_argument("--shape", choices=list(SHAPES), default="polygon",
                         help="tipo di elemento. polygon: poligoni da 3 a 6 vertici. "
                              "disc: dischi, anche di un solo pixel. "
-                             "voronoi: punti che dividono l'immagine in celle, ognuna del colore del suo punto")
+                             "voronoi: punti che dividono l'immagine in celle, ognuna del colore del suo punto. "
+                             "mosaic: tessere esagonali opache su un reticolo a nido d'ape, di più dimensioni. "
+                             "glyph: caratteri tipografici colorati, ruotabili. "
+                             "stroke: pennellate curve (curve di Bézier con un pennello rotondo)")
     shapes.add_argument("--elements", type=int, default=None,
-                        help="elementi massimi per immagine (se manca: 400 poligoni, 2000 dischi, 1000 punti). "
+                        help="elementi massimi per immagine (se manca: 400 poligoni, 2000 dischi, 1000 punti Voronoi, "
+                             "3000 tessere, 1500 caratteri, 1500 pennellate). "
                              "Più elementi permettono più dettaglio e rallentano ogni valutazione. "
                              "Ogni individuo parte con meno elementi e sale fino a questo numero")
     shapes.add_argument("--start-size", type=float, default=0.5,
                         help="lato massimo di un elemento all'inizio, come frazione del lato dell'immagine "
-                             "(0.5 = metà immagine); per i dischi è il diametro. Elementi grandi coprono subito "
+                             "(0.5 = metà immagine); per dischi e tessere è il diametro, per i caratteri il lato "
+                             "del riquadro, per le pennellate il lato del riquadro dei tre punti. "
+                             "Elementi grandi coprono subito "
                              "le zone di colore uniforme. Senza effetto su voronoi")
     shapes.add_argument("--max-size", type=float, default=0.12,
                         help="lato massimo finale. Il limite scende da --start-size a questo valore "

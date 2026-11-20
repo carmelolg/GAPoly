@@ -1,12 +1,24 @@
-# gapoly
+<table>
+  <tr>
+    <td valign="middle">
+      <img src="https://raw.githubusercontent.com/carmelolg/GAPoly/main/site/assets/logo/logo.svg" alt="GAPoly logo" width="96" height="96">
+    </td>
+    <td valign="middle">
+      <h1>GAPoly</h1>
+    </td>
+  </tr>
+</table>
 
-`gapoly` = GA + polygons (distribution `carmelolg-gapoly`, import `carmelolg.gapoly`, command `gapoly`).
+GAPoly = GA + polygons (distribution `carmelolg-gapoly`, import `carmelolg.gapoly`, command `gapoly`).
 
-Genetic algorithm that evolves semi-transparent elements until, stacked, they look like a target photo.
-The element is chosen with `--shape`: `polygon` (default), `disc` or `voronoi`.
-Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI as `carmelolg-galib`).
+Genetic algorithm that evolves elements until, stacked, they look like a target photo.
 
-- **Genome**: float32 array, one row per element, drawn in row order. A polygon has 3-6 vertices and a colour (RGBA), a disc a centre, a radius and a colour, a Voronoi seed a position and a colour.
+**Gallery: <https://carmelolg.github.io/GAPoly/>**
+
+The element is chosen with `--shape`: `polygon` (default), `disc`, `voronoi`, `mosaic`, `glyph` or `stroke`.
+Built on [GALib](https://carmelolg.github.io/GALib/) (`carmelolg.galib`, on PyPI as `carmelolg-galib`).
+
+- **Genome**: float32 array, one row per element, drawn in row order. A polygon has 3-6 vertices and a colour (RGBA), a disc a centre, a radius and a colour, a Voronoi seed a position and a colour, a mosaic tile a centre, a radius and a colour, a glyph a centre, a size, an angle, a character and a colour, a stroke a Bezier curve (start, control point, end), a brush width and a colour.
 - **Fitness**: pixel MSE between render and target (lower is better, `maximize = False`).
 - **Mutation**: move or reshape an element (a vertex, or the radius of a disc), change colour/alpha, add / remove an element, change overlap order.
 - **Crossover**: swap tails of the two element lists.
@@ -18,12 +30,16 @@ Built on [GALib](https://github.com/carmelolg/GALib) (`carmelolg.galib`, on PyPI
 | `polygon` | polygon with 3-6 vertices | 17 columns, see below | 400 |
 | `disc` | disc, from one pixel up to a group of pixels | 7 columns: `x y radius r g b a` | 2000 |
 | `voronoi` | seed of a Voronoi cell: each pixel takes the colour of its nearest seed | 5 columns: `x y r g b` | 1000 |
+| `mosaic` | opaque hexagonal tile snapped to a honeycomb lattice, in several sizes | 6 columns: `x y radius r g b` | 3000 |
+| `glyph` | typographic character, rotated and coloured | 9 columns: `x y size angle glyph r g b a` | 1500 |
+| `stroke` | brush stroke: quadratic Bezier curve painted with a round brush | 11 columns: `x0 y0 cx cy x1 y1 width r g b a` | 1500 |
 
 Each shape is a strategy: the abstract `Shape` (draw a genome, error against the target, create and mutate elements,
-describe) is implemented by `PolygonShape`, `DiscShape` and `VoronoiShape`, and `shapes/__init__.py` registers them by name
+describe) is implemented by `PolygonShape`, `DiscShape`, `VoronoiShape`, `MosaicShape`, `GlyphShape` and `StrokeShape`, and `shapes/__init__.py` registers them by name
 (the values of `--shape`). The problem, the callbacks and the command line only use the interface (see "Project layout").
 A disc is never smaller than the pixel under its
 centre, and its radius is a fraction of the longest image side, so discs stay round at any resolution.
+A mosaic tile is an opaque regular hexagon with no alpha. The rasteriser rounds its radius to a size level (steps of the square root of two) and moves its centre to the nearest node of the honeycomb lattice of that level, so tiles of one size fit together with no gaps or overlaps, big tiles cover regions and small ones add detail; a position change smaller than half a cell does not change the image. A glyph is drawn from an atlas of character masks rasterised once with Pillow's font (`GLYPHS` in `shapes/glyphs.py` lists the characters, the exact look depends on the font Pillow finds). A stroke is a curve flattened into short segments; every pixel nearer than half the brush width is covered once, so overlapping parts do not double the opacity. For discs, mosaic tiles, glyphs and strokes `--start-size` / `--max-size` cap the diameter, the glyph box and the box around the three curve points; the brush is at most a third of that.
 Voronoi seeds have no size, alpha or drawing order, so `--start-size` and `--max-size` do nothing for them. The rasteriser finds the nearest seed with a grid, exactly and in time close to the number of pixels: 20000 seeds on a 512x341 image take about 10 ms.
 
 ## Polygon genome layout
@@ -67,7 +83,7 @@ src/carmelolg/gapoly/
     kernels.py        Numba helpers (fill, MSE)
   shapes/           one module per way of reading the genome: layout, Numba rasteriser, mutations, Shape class
     __init__.py       SHAPES, the registry (values of --shape)
-    polygons.py  discs.py  voronoi.py
+    polygons.py  discs.py  voronoi.py  mosaic.py  glyphs.py  strokes.py
   callbacks/        GALib callbacks: snapshots.py (PNG, CSV, GIF), live.py (matplotlib), schedule.py (size cap)
   cli/              app.py (arguments, help text, main), help_format.py (colours)
 tests/test_gapoly.py
