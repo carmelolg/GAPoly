@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.2.0...carmelolg-gapoly-v0.3.0) (2026-11-20)
+
+
+### Features
+
+* add mosaic, glyph and stroke shapes, rename repository to GAPoly ([53158de](https://github.com/carmelolg/GAPoly/commit/53158de74d67a35f354b5162756459a6896b2fca))
+* **site:** gallery published on GitHub Pages with the lossless works optimizer ([74bcb01](https://github.com/carmelolg/GAPoly/commit/74bcb01978280f262f0251a2e2d399857193e010))
+
 ## [0.2.0](https://github.com/carmelolg/genetic-evolving-polygons/compare/carmelolg-gapoly-v0.1.0...carmelolg-gapoly-v0.2.0) (2026-11-18)
 
 
