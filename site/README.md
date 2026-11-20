@@ -20,9 +20,10 @@ il sito (workflow `.github/workflows/pages.yml`); si può anche avviare a mano d
 In `assets/logo/` come `logo.svg` (o `.png`, `.webp`) e, opzionale, `favicon.png`. Vedi `assets/logo/README.md`.
 
 ## Testi del sito
-In `site.json`: titolo, sottotitolo, descrizione, autore, link, paragrafi "Info", `url` del sito (serve ai link
+In `site.json`: titolo, sottotitolo, descrizione, autore (con `author_url` il nome diventa un link nel piè di pagina), link, paragrafi "Info", `url` del sito (serve ai link
 canonical/hreflang) e, se vuoi, la licenza nel piè di pagina
-(`"license": {"name": "Apache-2.0", "url": "https://..."}`; senza il campo non compare).
+(`"license": {"name": "Apache-2.0", "url": "https://..."}`; senza il campo non compare). Accanto si può mostrare
+la licenza delle opere con `"works_license": {"name": "CC BY-NC-SA 4.0", "url": "https://..."}` (stesso formato).
 
 ## Due lingue (it / en)
 - La radice del sito (`/`) è in italiano, l'inglese sta in `/en/`; nell'intestazione c'è il selettore IT | EN.

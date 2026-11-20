@@ -111,6 +111,7 @@
   "fact.shape": "forma",
   "toast.copied": "Link copiato",
   "foot.license": "Licenza {name}",
+  "foot.works_license": "Opere {name}",
   "theme.to_light": "Passa al tema chiaro",
   "theme.to_dark": "Passa al tema scuro",
   "viewer.aka": "Noto anche come: {names}",

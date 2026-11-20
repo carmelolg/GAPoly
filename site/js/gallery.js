@@ -521,13 +521,28 @@
       try { host = new URL(l.url).host.replace(/^www\./, ""); } catch (e) { /* relative link */ }
       return el("li", {}, el("a", { href: l.url, rel: "noopener" }, [el("span", {}, [l.label, host && el("small", { text: host })]), icon(ICONS.arrow)]));
     }));
-    $("foot-text").textContent = site.author ? `© ${new Date().getFullYear()} ${site.author} · ${title}` : title;
+    // Author name, optionally a link: {"author": "...", "author_url": "https://..."}.
+    const footText = $("foot-text");
+    if (!site.author) footText.textContent = title;
+    else {
+      const who = site.author_url ? el("a", { href: site.author_url, rel: "author noopener", text: site.author }) : site.author;
+      footText.replaceChildren(`© ${new Date().getFullYear()} `, who, ` · ${title}`);
+    }
     // The licence comes from site.json: {"license": {"name": "...", "url": "..."}}; without it nothing is shown.
     const license = site.license;
     if (license && license.name) {
       const link = $("foot-license-link");
       link.textContent = t("foot.license", { name: license.name });
       if (license.url) link.href = license.url; else link.removeAttribute("rel");
+      $("foot-license").hidden = false;
+    }
+    // Optional licence of the works (the generated images), shown next to the code licence: {"works_license": {"name": "...", "url": "..."}}.
+    const worksLicense = site.works_license;
+    if (worksLicense && worksLicense.name) {
+      const link = $("foot-works-license-link");
+      link.textContent = t("foot.works_license", { name: worksLicense.name });
+      if (worksLicense.url) link.href = worksLicense.url; else link.removeAttribute("rel");
+      $("foot-works-license").hidden = false;
       $("foot-license").hidden = false;
     }
   }

@@ -377,8 +377,8 @@ main > .hero { padding-block: clamp(28px, 5vw, 64px) clamp(48px, 7vw, 96px); }
 .foot { border-top: 1px solid var(--line); padding-block: 28px calc(28px + env(safe-area-inset-bottom)); font-size: .88rem; color: var(--muted); }
 .foot-inner { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .foot p { margin: 0; }
-.foot-license a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
-.foot-license a:hover { color: var(--ink); text-decoration-color: currentColor; }
+#foot-text a, .foot-license a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+#foot-text a:hover, .foot-license a:hover { color: var(--ink); text-decoration-color: currentColor; }
 .foot-license a:not([href]) { text-decoration: none; }
 .to-top { text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
 .to-top:hover { color: var(--ink); }

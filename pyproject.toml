@@ -8,6 +8,9 @@ version = "0.3.3"
 description = "Evolve polygons, discs, Voronoi points, mosaic tiles, glyphs or brush strokes with a genetic algorithm (GALib) until they look like a target photo."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Carmelo La Gamba" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -19,6 +22,7 @@ classifiers = [
 dependencies = ["carmelolg-galib>=0.3.0", "numpy>=1.24", "Pillow>=10", "numba>=0.60"]
 
 [project.urls]
+Author = "https://carmelolg.github.io"
 Homepage = "https://github.com/carmelolg/GAPoly"
 Source = "https://github.com/carmelolg/GAPoly"
 Issues = "https://github.com/carmelolg/GAPoly/issues"

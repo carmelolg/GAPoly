@@ -8,10 +8,15 @@
     "it": "Ho istruito un algoritmo genetico a dipingere: parte dal caos, muta e si incrocia, generazione dopo generazione, finché il quadro somiglia all'originale, che sia una foto o un'opera d'arte.",
     "en": "I taught a genetic algorithm to paint: it starts from chaos, mutates and crosses, generation after generation, until the picture resembles the original, whether a photo or a work of art."
   },
-  "author": "carmelolg",
+  "author": "Carmelo La Gamba",
+  "author_url": "https://carmelolg.github.io",
   "license": {
     "name": "Apache-2.0",
     "url": "https://www.apache.org/licenses/LICENSE-2.0"
+  },
+  "works_license": {
+    "name": "CC BY-NC-SA 4.0",
+    "url": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
   },
   "url": "https://carmelolg.github.io/GAPoly/",
   "repo_url": "https://github.com/carmelolg/GAPoly",
