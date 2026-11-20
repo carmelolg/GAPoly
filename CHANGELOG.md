@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.3...carmelolg-gapoly-v0.3.4) (2026-11-20)
+
+
+### Documentation
+
+* add Apache-2.0 for code, CC BY-NC-SA 4.0 for works, author link ([4294376](https://github.com/carmelolg/GAPoly/commit/42943768458caa3e9f8076b00eabb842d0376464))
+
 ## [0.3.3](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.2...carmelolg-gapoly-v0.3.3) (2026-11-20)
 
 
