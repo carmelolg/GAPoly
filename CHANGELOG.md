@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.1...carmelolg-gapoly-v0.3.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **site:** mobile header, viewer bar and hero buttons; docs: restructure README ([601e023](https://github.com/carmelolg/GAPoly/commit/601e023bb95a85b2b5ddb029d426708ae0f42318))
+
 ## [0.3.1](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.0...carmelolg-gapoly-v0.3.1) (2026-11-20)
 
 
