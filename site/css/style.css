@@ -86,6 +86,7 @@ code { font-family: var(--mono); font-size: .85em; background: var(--surface-2);
   background: transparent; color: var(--ink); text-decoration: none; transition: background .2s, border-color .2s;
 }
 .icon-btn:hover { background: var(--surface); border-color: var(--line); }
+.icon-btn:focus-visible { border-radius: 50%; outline-offset: 0; }
 .icon-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
 .chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--pad)) 28px; padding: 2px var(--pad); }
@@ -132,13 +133,14 @@ code { font-family: var(--mono); font-size: .85em; background: var(--surface-2);
 .top-extra { display: contents; }
 @media (max-width: 560px) {
   /* one row: brand, section links, theme and a "more" menu; language and GitHub go in a dropdown */
+  .top { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .top-inner { gap: 4px; }
   .brand { margin-right: 0; font-size: 1rem; }
   #site-title { display: none; }
   .nav { gap: 0; flex: 1 1 auto; justify-content: space-evenly; min-width: 0; }
   .nav a { padding: 0 8px; font-size: .9rem; }
   .nav a[aria-current="true"]::after { left: 8px; right: 8px; }
-  .menu-btn { display: inline-flex; }
+  .menu-btn { display: inline-grid; }
   .top-actions { position: relative; flex-shrink: 0; }
   .top-extra {
     display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; min-width: 160px;
@@ -194,6 +196,12 @@ code { font-family: var(--mono); font-size: .85em; background: var(--surface-2);
   .hero-art { order: -1; }
   .hero-art { --maxh: 62svh; }
   .hero-text h1 { max-width: 14ch; }
+}
+
+@media (max-width: 560px) {
+  /* the two buttons share one row, however narrow the phone */
+  .hero-cta { flex-wrap: nowrap; gap: 8px; }
+  .hero-cta .btn { flex: 1 1 auto; min-width: 0; padding: 0 14px; gap: 6px; white-space: nowrap; font-size: .9rem; }
 }
 
 /* segmented control (versions) */
@@ -389,9 +397,9 @@ main > .hero { padding-block: clamp(28px, 5vw, 64px) clamp(48px, 7vw, 96px); }
   grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-height: 60px;
   padding: 8px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); border-bottom: 1px solid var(--line);
 }
-.v-bar .crumb { margin-right: auto; display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: .88rem; color: var(--muted); }
+.v-bar .crumb { margin-right: auto; display: flex; align-items: center; gap: 10px; min-width: 0; font-size: .88rem; color: var(--muted); }
 .v-bar .crumb b { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.v-bar .pos { font: .78rem var(--mono); color: var(--faint); }
+.v-bar .pos { flex: none; white-space: nowrap; font: .78rem var(--mono); color: var(--faint); }
 .v-bar .icon-btn:disabled { opacity: .3; pointer-events: none; }
 .toast { position: absolute; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); translate: -50% 0; z-index: 5; padding: 10px 16px; border-radius: 99px; background: var(--ink); color: var(--bg); font-size: .85rem; font-weight: 500; pointer-events: none; animation: toast 2.2s var(--ease) forwards; }
 @keyframes toast { 0% { opacity: 0; translate: -50% 8px; } 12%, 80% { opacity: 1; translate: -50% 0; } 100% { opacity: 0; } }
@@ -467,6 +475,13 @@ button.version:hover { transform: translateY(-3px); }
   .kbd-hint { display: none; }
   .v-quick { display: flex; }
   .v-stage { gap: 12px; }
+}
+
+@media (max-width: 560px) {
+  /* the title is right below the image: the bar only keeps close, position and the three actions on one line */
+  .v-bar { gap: 4px; }
+  .v-bar .crumb b { display: none; }
+  .v-bar .crumb { justify-content: center; margin-inline: auto; }
 }
 
 /* ---------- scroll reveal ---------- */
