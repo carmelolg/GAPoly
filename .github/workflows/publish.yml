@@ -1,6 +1,6 @@
 # Publishes the package to PyPI with Trusted Publishing (no API token).
 # Started by the release-please workflow after it creates a release, or by hand from the Actions tab.
-# Prerequisite, once: a trusted publisher on PyPI (owner carmelolg, repository genetic-evolving-polygons, workflow publish.yml,
+# Prerequisite, once: a trusted publisher on PyPI (owner carmelolg, repository GAPoly, workflow publish.yml,
 # environment pypi) and the environment "pypi" in the repository settings.
 name: Publish
 
