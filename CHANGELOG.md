@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.0...carmelolg-gapoly-v0.3.1) (2026-11-20)
+
+
+### Documentation
+
+* add badges to README ([5bde3f5](https://github.com/carmelolg/GAPoly/commit/5bde3f5b978b92d2d96ba03e2c99b03e2d91a8f3))
+
 ## [0.3.0](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.2.0...carmelolg-gapoly-v0.3.0) (2026-11-20)
 
 
