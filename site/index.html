@@ -1,0 +1,118 @@
+<!doctype html>
+<!-- Template of the home page. tools/build_site.py writes it once per language, filling the double-brace placeholders
+     with the strings in site/i18n/<language>.json and the values it computes (lang, base, site_title, ...); the parts
+     shared with the page of all the works (head, header, footer, viewer) are in site/partials/.
+     Two braces: escaped text. Three braces: HTML. -->
+<html lang="{{lang}}" data-base="{{base}}" data-works="{{works_json}}" data-page="home">
+<head>
+{{{partial.head}}}
+</head>
+<body>
+{{{partial.header}}}
+
+  <main>
+    <!-- Hero: the featured work, live, next to two lines that say what this place is. -->
+    <section class="hero wrap" aria-labelledby="intro-title">
+      <div class="hero-text">
+        <p class="eyebrow"><span class="dot" aria-hidden="true"></span>{{hero.eyebrow}}</p>
+        <h1 id="intro-title">{{site_tagline}}</h1>
+        <p id="site-description" class="lead">{{site_description}}</p>
+        <dl id="hero-stats" class="hero-stats" hidden></dl>
+        <div class="hero-cta">
+          <a class="btn primary" href="#opere">{{hero.cta.works}}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>
+          <a class="btn ghost" href="#metodo">{{hero.cta.method}}</a>
+        </div>
+      </div>
+      <figure id="hero" class="hero-art" hidden></figure>
+    </section>
+
+    <section id="opere" class="works wrap" aria-labelledby="opere-title">
+      <div class="section-head">
+        <div>
+          <p class="kicker">{{works.kicker}}</p>
+          <h2 id="opere-title">{{works.title}}</h2>
+        </div>
+        <p id="count" class="count" aria-live="polite"></p>
+      </div>
+      <div id="grid" class="grid"></div>
+      <div id="more" class="more" hidden>
+        <a id="see-all" class="btn primary" href="{{works_url}}"></a>
+      </div>
+      <div id="empty" class="empty" hidden>
+        <p><strong>{{works.empty.title}}</strong></p>
+        <p>{{{works.empty.body_html}}}</p>
+      </div>
+    </section>
+
+    <section id="metodo" class="method" aria-labelledby="how-title">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <p class="kicker">{{method.kicker}}</p>
+            <h2 id="how-title">{{method.title}}</h2>
+          </div>
+        </div>
+        <p class="lead method-lead">{{method.lead}}</p>
+
+        <ol class="steps">
+          <li>
+            <svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="10" width="14" height="14" rx="2"/><rect x="28" y="10" width="14" height="14" rx="2" class="hl"/><rect x="6" y="28" width="14" height="10" rx="2"/><rect x="28" y="28" width="14" height="10" rx="2"/></svg>
+            <h3>{{step.select.title}}</h3>
+            <p>{{step.select.text}}</p>
+          </li>
+          <li>
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 10c12 0 20 28 32 28M8 38c12 0 20-28 32-28"/><circle cx="24" cy="24" r="3" class="hl-fill"/></svg>
+            <h3>{{step.cross.title}}</h3>
+            <p>{{step.cross.text}}</p>
+          </li>
+          <li>
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 34 20 14l8 16"/><path d="M26 30l6-10 6 14" class="hl"/></svg>
+            <h3>{{step.mutate.title}}</h3>
+            <p>{{step.mutate.text}}</p>
+          </li>
+          <li>
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M38 24a14 14 0 1 1-4.1-9.9"/><path d="M34 6v8h-8" class="hl"/></svg>
+            <h3>{{step.repeat.title}}</h3>
+            <p>{{step.repeat.text}}</p>
+          </li>
+        </ol>
+
+        <div id="curve" class="curve" hidden>
+          <div class="curve-text">
+            <h3>{{curve.title}}</h3>
+            <p>{{curve.text}}</p>
+            <p id="curve-caption" class="mono-note"></p>
+          </div>
+          <div id="curve-chart" class="curve-chart"></div>
+        </div>
+
+        <div class="shapes-block">
+          <h3>{{shapes.title}}</h3>
+          <p class="muted">{{shapes.lead}}</p>
+          <ul id="shapes" class="shapes"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="info" class="info wrap" aria-labelledby="info-title">
+      <div class="section-head">
+        <div>
+          <p class="kicker">{{info.kicker}}</p>
+          <h2 id="info-title">{{info.title}}</h2>
+        </div>
+      </div>
+      <div class="info-grid">
+        <div id="about" class="about"></div>
+        <ul id="links" class="links"></ul>
+      </div>
+    </section>
+  </main>
+
+{{{partial.footer}}}
+
+{{{partial.viewer}}}
+
+  <noscript><p class="empty wrap">{{noscript}}</p></noscript>
+</body>
+</html>

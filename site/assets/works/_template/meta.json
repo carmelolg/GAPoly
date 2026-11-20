@@ -1,0 +1,12 @@
+{
+  "title": "Titolo dell'opera",
+  "description": "Due righe su cosa si vede e come è nata.",
+  "artist": "Nome Cognome",
+  "year": "1889",
+  "also_known_as": ["Altro titolo"],
+  "technique": "Algoritmo genetico",
+  "date": "2026-11-20",
+  "tags": ["paesaggio", "città"],
+  "featured": false,
+  "main": "disc"
+}

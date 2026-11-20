@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-02",
+  "title": {
+    "it": "Giardino giapponese",
+    "en": "Japanese garden"
+  },
+  "artist": "Masaaki Komori",
+  "location": {
+    "it": "Tempio Tenryū-ji, Kyōto, Giappone",
+    "en": "Tenryu-ji Temple, Kyoto, Japan"
+  },
+  "credits": [
+    {
+      "label": {
+        "it": "Foto su Unsplash",
+        "en": "Photo on Unsplash"
+      },
+      "url": "https://unsplash.com/photos/qwPSnBvdhtI"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "title": "GAPoly",
+  "tagline": {
+    "it": "L'arte tramite algoritmi genetici",
+    "en": "Art through genetic algorithms"
+  },
+  "description": {
+    "it": "Ho istruito un algoritmo genetico a dipingere: parte dal caos, muta e si incrocia, generazione dopo generazione, finché il quadro somiglia all'originale, che sia una foto o un'opera d'arte.",
+    "en": "I taught a genetic algorithm to paint: it starts from chaos, mutates and crosses, generation after generation, until the picture resembles the original, whether a photo or a work of art."
+  },
+  "author": "carmelolg",
+  "license": {
+    "name": "Apache-2.0",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+  },
+  "url": "https://carmelolg.github.io/GAPoly/",
+  "repo_url": "https://github.com/carmelolg/GAPoly",
+  "links": [
+    {
+      "label": {
+        "it": "Codice su GitHub",
+        "en": "Code on GitHub"
+      },
+      "url": "https://github.com/carmelolg/GAPoly"
+    },
+    {
+      "label": {
+        "it": "GALib, il motore genetico",
+        "en": "GALib, the genetic engine"
+      },
+      "url": "https://carmelolg.github.io/GALib"
+    }
+  ],
+  "about": {
+    "it": [
+      "Un laboratorio di arte generativa. Le opere nascono da un algoritmo genetico che ricostruisce una fotografia con poligoni, dischi, tessere, caratteri o pennellate."
+    ],
+    "en": [
+      "A generative art lab. The works come from a genetic algorithm that rebuilds a photograph with polygons, discs, tiles, glyphs or brush strokes."
+    ]
+  }
+}

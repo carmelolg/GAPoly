@@ -11,6 +11,17 @@ __pycache__/
 .coverage
 # results of the runs
 out/
+# the gallery built by tools/build_site.py (published by the Pages workflow)
+_site/
+# gapoly logs and the snapshots of a run (only final.png, evolution.gif, history.csv go in site/assets/works)
+*.log
+site/assets/works/*/snapshots/
+# local settings and secrets
+.env
+.claude/settings.local.json
 # editors and OS
 .idea/
+.vscode/
 .DS_Store
+Thumbs.db
+*.bak

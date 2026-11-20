@@ -1,0 +1,11 @@
+{
+  "shape": "disc",
+  "label": "Dischi",
+  "params": {
+    "generations": 25000,
+    "population": 20,
+    "elements": 5000,
+    "size": 256,
+    "seed": 1
+  }
+}

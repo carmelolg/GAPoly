@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-23",
+  "title": {
+    "it": "Sposi al tramonto",
+    "en": "Newlyweds at sunset"
+  },
+  "artist": "Aleksandra Sapozhnikova",
+  "credits": [
+    {
+      "label": {
+        "it": "Foto su Unsplash",
+        "en": "Photo on Unsplash"
+      },
+      "url": "https://unsplash.com/photos/ULtSQOwkkY0"
+    }
+  ],
+  "main": "stroke"
+}

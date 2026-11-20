@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Template of the page with all the works (same placeholders and partials as index.html). -->
+<html lang="{{lang}}" data-base="{{base}}" data-works="{{works_json}}" data-page="works">
+<head>
+{{{partial.head}}}
+</head>
+<body>
+{{{partial.header}}}
+
+  <main>
+    <section id="opere" class="works works-page wrap" aria-labelledby="opere-title">
+      <a class="back" href="{{home_url}}">{{works.back}}</a>
+      <div class="section-head">
+        <div>
+          <p class="kicker">{{works.page.kicker}}</p>
+          <h1 id="opere-title">{{works.page.title}}</h1>
+        </div>
+        <p id="count" class="count" aria-live="polite"></p>
+      </div>
+      <div id="filters" class="chips" role="group" aria-label="{{works.filters.aria}}" hidden></div>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty" hidden>
+        <p><strong>{{works.empty.title}}</strong></p>
+        <p>{{{works.empty.body_html}}}</p>
+      </div>
+    </section>
+  </main>
+
+{{{partial.footer}}}
+
+{{{partial.viewer}}}
+
+  <noscript><p class="empty wrap">{{noscript}}</p></noscript>
+</body>
+</html>

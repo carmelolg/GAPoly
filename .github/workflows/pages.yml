@@ -1,0 +1,46 @@
+# Builds the gallery (site/ + tools/build_site.py) and publishes it on GitHub Pages.
+# Runs when something under site/ changes on main, so adding a folder of works in site/assets/works/ is enough
+# to update the site. It can also be started by hand from the Actions tab.
+# Prerequisite, once: repository Settings > Pages > Build and deployment > Source: "GitHub Actions".
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "tools/build_site.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false  # let a running deployment finish, then publish the latest
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the site
+        run: pipx run tools/build_site.py --site site --out _site  # pipx reads the Pillow dependency from the script header
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

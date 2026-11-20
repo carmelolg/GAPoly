@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-13",
+  "title": {
+    "it": "Donna con coppa",
+    "en": "Woman with a Cup"
+  },
+  "featured": true,
+  "artist": "Guido Reni",
+  "year": "1638–1639",
+  "also_known_as": [
+    {
+      "it": "Ritratto di donna",
+      "en": "Portrait of a Woman"
+    },
+    {
+      "it": "Dama con coppa di lapislazzuli",
+      "en": "Lady with a Lapis Lazuli Cup"
+    },
+    {
+      "it": "Artemisia",
+      "en": "Artemisia"
+    }
+  ],
+  "main": "polygon"
+}
