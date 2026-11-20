@@ -9,6 +9,8 @@
   </tr>
 </table>
 
+[![CI](https://github.com/carmelolg/GAPoly/actions/workflows/ci.yml/badge.svg)](https://github.com/carmelolg/GAPoly/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/carmelolg/GAPoly/graph/badge.svg)](https://codecov.io/gh/carmelolg/GAPoly)
 [![PyPI](https://img.shields.io/pypi/v/carmelolg-gapoly)](https://pypi.org/project/carmelolg-gapoly/)
 [![Python](https://img.shields.io/pypi/pyversions/carmelolg-gapoly)](https://pypi.org/project/carmelolg-gapoly/)
 [![Pages](https://github.com/carmelolg/GAPoly/actions/workflows/pages.yml/badge.svg)](https://github.com/carmelolg/GAPoly/actions/workflows/pages.yml)

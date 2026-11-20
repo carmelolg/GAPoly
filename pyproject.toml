@@ -17,7 +17,7 @@ Issues = "https://github.com/carmelolg/GAPoly/issues"
 
 [project.optional-dependencies]
 live = ["matplotlib>=3.7"]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 
 [project.scripts]
 gapoly = "carmelolg.gapoly.cli:main"
@@ -31,6 +31,14 @@ namespaces = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tools"]
+
+[tool.coverage.run]
+source = ["carmelolg.gapoly"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
 
 [tool.ruff]
 line-length = 110
