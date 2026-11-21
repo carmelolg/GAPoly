@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.4...carmelolg-gapoly-v0.4.0) (2026-11-21)
+
+
+### Performance Improvements
+
+* compute the incremental delta in one nogil kernel per shape ([333572f](https://github.com/carmelolg/GAPoly/commit/333572ff9438a8ef923e732b37681d78560e0d63))
+* incremental fitness, redraw only the pixels a mutation can change ([8a1b6f3](https://github.com/carmelolg/GAPoly/commit/8a1b6f3711f5168fd17d53fbf5e31e4fd8ee3303))
+* mutation in Numba for every shape, faster stroke rasteriser ([6d97732](https://github.com/carmelolg/GAPoly/commit/6d977320643aee6b5482d2a9b916d36a362c12e1))
+
+
+### Documentation
+
+* describe the real cost of a generation in the help ([49d1eee](https://github.com/carmelolg/GAPoly/commit/49d1eee2e9fb035061bacb250a383d2cf7b36411))
+
 ## [0.3.4](https://github.com/carmelolg/GAPoly/compare/carmelolg-gapoly-v0.3.3...carmelolg-gapoly-v0.3.4) (2026-11-20)
 
 
