@@ -29,7 +29,3 @@ class Limits:
     max_alpha: float = 0.95
     max_size: float = 0.12
     min_size: float = 0.0
-
-
-def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
-    return low if value < low else min(value, high)

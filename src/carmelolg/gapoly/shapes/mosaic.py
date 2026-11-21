@@ -22,15 +22,27 @@ There is no alpha. With no tile the image is the background. A tile is never sma
 """
 from __future__ import annotations
 
-import math
 from random import Random
 
 import numpy as np
 from numba import njit
 
-from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill, merge_boxes, unmatched_rows, window_error
-from ..core.operators import mutate_rows
+from ..core.common import Array, Genome, Limits, Row
+from ..core.kernels import (
+    L_MAX_ELEMENTS,
+    L_MAX_SIZE,
+    L_MIN_SIZE,
+    canvas_mse,
+    clamp,
+    drop_and_move,
+    fill,
+    insert_row,
+    limits_array,
+    merge_boxes,
+    pick,
+    unmatched_rows,
+    window_error,
+)
 from ..core.shape import Shape
 
 X, Y, RADIUS = 0, 1, 2
@@ -87,49 +99,95 @@ def snap(cx, cy, radius):  # type: ignore[no-untyped-def]
     return best_x, best_y
 
 
-def _radius_bounds(limits: Limits) -> tuple[float, float]:
-    low = max(limits.min_size / 2, 1e-4)
-    return low, max(low, limits.max_size / 2)
+@njit(cache=True, nogil=True, fastmath=True)
+def _radius_bounds(lim):  # type: ignore[no-untyped-def]
+    low = max(lim[L_MIN_SIZE] / 2, 1e-4)
+    return low, max(low, lim[L_MAX_SIZE] / 2)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row(lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    """Random tile at ``(cx, cy)``, at most ``max_size`` wide; negative values are drawn at random."""
+    low, high = _radius_bounds(lim)
+    if cx < 0.0:
+        cx, cy = np.random.random(), np.random.random()
+    if r < 0.0:
+        r, g, b = np.random.random(), np.random.random(), np.random.random()
+    row = np.empty(COLS, dtype=np.float32)
+    row[X], row[Y] = cx, cy
+    row[RADIUS] = np.random.uniform(low, high)
+    row[RED], row[GREEN], row[BLUE] = r, g, b
+    return row
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _new_row(lim):  # type: ignore[no-untyped-def]
+    return _random_row(lim, -1.0, -1.0, -1.0, -1.0, -1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _move(row, lim):  # type: ignore[no-untyped-def]
+    """Hop about one cell: the step follows the tile size, since a smaller move would not change the image."""
+    sigma = max(0.01, 1.5 * row[RADIUS])
+    row[X] = clamp(row[X] + np.random.normal(0.0, sigma), 0.0, 1.0)
+    row[Y] = clamp(row[Y] + np.random.normal(0.0, sigma), 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _resize(row, lim):  # type: ignore[no-untyped-def]
+    """Scale the radius by a log-normal factor; never grows past the cap (a tile already above it can only shrink)."""
+    low, high = _radius_bounds(lim)
+    row[RADIUS] = clamp(row[RADIUS] * np.exp(np.random.normal(0.0, 0.35)), low, max(high, row[RADIUS]))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
+    if np.random.random() < 0.6:
+        _move(row, lim)
+    else:
+        _resize(row, lim)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _change_color(row, lim):  # type: ignore[no-untyped-def]
+    for channel in range(RED, BLUE + 1):
+        row[channel] = clamp(row[channel] + np.random.normal(0.0, 0.06), 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row_seeded(seed, lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    np.random.seed(seed)
+    return _random_row(lim, cx, cy, r, g, b)
+
+
+@njit(cache=True, nogil=True)
+def _mutate(genome, seed, rate, per_row, lim):  # type: ignore[no-untyped-def]
+    """Edit the shape of some elements, then the colour of some, add one, remove one, move one. ``seed`` starts the
+    thread's Numba generator, so a call depends only on its arguments. ``genome`` is not modified."""
+    np.random.seed(seed)
+    g = genome.copy()
+    picked = np.empty(g.shape[0], dtype=np.int64)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _edit_shape(g[picked[t]], lim)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _change_color(g[picked[t]], lim)
+    if np.random.random() < rate and g.shape[0] < lim[L_MAX_ELEMENTS]:
+        g = insert_row(g, np.random.randint(0, g.shape[0] + 1), _new_row(lim))
+    return drop_and_move(g, rate, lim, True)
 
 
 def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
                center: tuple[float, float] | None = None) -> Row:
     """Random tile at ``center`` (random if omitted), at most ``max_size`` wide. ``rgb`` is the colour."""
-    low, high = _radius_bounds(limits)
-    cx, cy = center if center is not None else (rng.random(), rng.random())
-    rgb = rgb if rgb is not None else (rng.random(), rng.random(), rng.random())
-    return make_row(cx, cy, rng.uniform(low, high), rgb)
+    cx, cy = center if center is not None else (-1.0, -1.0)  # -1: draw it at random
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    return _random_row_seeded(rng.getrandbits(32), limits_array(limits), cx, cy, r, g, b)
 
 
-def move(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    """Hop about one cell: the step follows the tile size, since a smaller move would not change the image."""
-    sigma = max(0.01, 1.5 * float(row[RADIUS]))
-    row[X] = clamp(float(row[X]) + rng.gauss(0, sigma))
-    row[Y] = clamp(float(row[Y]) + rng.gauss(0, sigma))
-
-
-def resize(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.35) -> None:
-    """Scale the radius by a log-normal factor; never grows past the cap (a tile already above it can only shrink)."""
-    low, high = _radius_bounds(limits)
-    row[RADIUS] = clamp(float(row[RADIUS]) * math.exp(rng.gauss(0, sigma)), low, max(high, float(row[RADIUS])))
-
-
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in (RED, GREEN, BLUE):
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-
-
-def _edit_shape(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    if rng.random() < 0.6:
-        move(row, rng, limits)
-    else:
-        resize(row, rng, limits)
-
-
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_tile: float | None = None) -> Genome:
-    """Move or resize some tiles, recolour some, add / remove / reorder (see ``operators.mutate_rows``)."""
-    return mutate_rows(genome, rng, rate, limits, per_tile, _edit_shape, change_color,
-                       lambda r, lim: random_row(r, lim))
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
+    """Move or resize some tiles, recolour some, add / remove / reorder (see ``kernels.mutate_rows``)."""
+    return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
+                   rate if per_element is None else per_element, limits_array(limits))
 
 
 @njit(cache=True, nogil=True, fastmath=True)

@@ -18,15 +18,29 @@ pixel centre to the nearest segment.
 """
 from __future__ import annotations
 
-import math
 from random import Random
 
 import numpy as np
 from numba import njit
 
-from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill, merge_boxes, unmatched_rows, window_error
-from ..core.operators import mutate_rows
+from ..core.common import Array, Genome, Limits, Row
+from ..core.kernels import (
+    L_MAX_ALPHA,
+    L_MAX_ELEMENTS,
+    L_MAX_SIZE,
+    L_MIN_ALPHA,
+    L_MIN_SIZE,
+    canvas_mse,
+    clamp,
+    drop_and_move,
+    fill,
+    insert_row,
+    limits_array,
+    merge_boxes,
+    pick,
+    unmatched_rows,
+    window_error,
+)
 from ..core.shape import Shape
 
 X0, Y0, CX, CY, X1, Y1, WIDTH = 0, 1, 2, 3, 4, 5, 6
@@ -57,71 +71,129 @@ def describe(genome: Genome) -> str:
         for k, row in enumerate(genome))
 
 
-def _width_bounds(limits: Limits) -> tuple[float, float]:
-    low = max(limits.min_size, 1e-4)
-    return low, max(low, limits.max_size / 3)  # the brush is thin compared with the stroke it paints
+@njit(cache=True, nogil=True, fastmath=True)
+def _extent(row):  # type: ignore[no-untyped-def]
+    """Largest side of the box around the three points of the stroke (the curve stays inside it)."""
+    xs = np.array([row[X0], row[CX], row[X1]])
+    ys = np.array([row[Y0], row[CY], row[Y1]])
+    return max(xs.max() - xs.min(), ys.max() - ys.min())
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _width_bounds(lim):  # type: ignore[no-untyped-def]
+    low = max(lim[L_MIN_SIZE], 1e-4)
+    return low, max(low, lim[L_MAX_SIZE] / 3)  # the brush is thin compared with the stroke it paints
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row(lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    """Random slightly curved stroke centred on ``(cx, cy)``, at most ``max_size`` long; negative values are random."""
+    low, high = _width_bounds(lim)
+    if cx < 0.0:
+        cx, cy = np.random.random(), np.random.random()
+    if r < 0.0:
+        r, g, b = np.random.random(), np.random.random(), np.random.random()
+    length = np.random.uniform(0.3, 1.0) * lim[L_MAX_SIZE]
+    angle = np.random.uniform(0.0, np.pi)
+    dx, dy = np.cos(angle) * length / 2, np.sin(angle) * length / 2
+    bend = np.random.uniform(-0.3, 0.3) * length  # sideways offset of the control point
+    half = length / 2
+    if half == 0.0:
+        half = 1.0
+    row = np.empty(COLS, dtype=np.float32)
+    row[X0], row[Y0] = clamp(cx - dx, 0.0, 1.0), clamp(cy - dy, 0.0, 1.0)
+    row[X1], row[Y1] = clamp(cx + dx, 0.0, 1.0), clamp(cy + dy, 0.0, 1.0)
+    row[CX], row[CY] = clamp(cx - dy / half * bend, 0.0, 1.0), clamp(cy + dx / half * bend, 0.0, 1.0)
+    row[RED], row[GREEN], row[BLUE] = r, g, b
+    row[ALPHA] = np.random.uniform(max(lim[L_MIN_ALPHA], 0.1), min(lim[L_MAX_ALPHA], 0.6))
+    row[WIDTH] = np.random.uniform(low, high)
+    return row
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _new_row(lim):  # type: ignore[no-untyped-def]
+    return _random_row(lim, -1.0, -1.0, -1.0, -1.0, -1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _move_point(row, lim):  # type: ignore[no-untyped-def]
+    """Move the start, the control point or the end in place; undone if the stroke would grow past the cap."""
+    before = row.copy()
+    old = _extent(row)
+    column = 2 * np.random.randint(0, 3)  # X0, CX or X1
+    row[column] = clamp(row[column] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    row[column + 1] = clamp(row[column + 1] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    if _extent(row) > max(lim[L_MAX_SIZE], old):  # never grow past the cap
+        row[:] = before
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _shift_stroke(row, lim):  # type: ignore[no-untyped-def]
+    dx, dy = np.random.normal(0.0, 0.02), np.random.normal(0.0, 0.02)
+    for column in (X0, CX, X1):
+        row[column] = clamp(row[column] + dx, 0.0, 1.0)
+        row[column + 1] = clamp(row[column + 1] + dy, 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _resize(row, lim):  # type: ignore[no-untyped-def]
+    """Scale the brush width by a log-normal factor; never grows past the cap (wider than it can only shrink)."""
+    low, high = _width_bounds(lim)
+    row[WIDTH] = clamp(row[WIDTH] * np.exp(np.random.normal(0.0, 0.25)), low, max(high, row[WIDTH]))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
+    pick = np.random.random()
+    if pick < 0.5:
+        _move_point(row, lim)
+    elif pick < 0.75:
+        _shift_stroke(row, lim)
+    else:
+        _resize(row, lim)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _change_color(row, lim):  # type: ignore[no-untyped-def]
+    for channel in range(RED, BLUE + 1):
+        row[channel] = clamp(row[channel] + np.random.normal(0.0, 0.06), 0.0, 1.0)
+    row[ALPHA] = clamp(row[ALPHA] + np.random.normal(0.0, 0.06), lim[L_MIN_ALPHA], lim[L_MAX_ALPHA])
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row_seeded(seed, lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    np.random.seed(seed)
+    return _random_row(lim, cx, cy, r, g, b)
+
+
+@njit(cache=True, nogil=True)
+def _mutate(genome, seed, rate, per_row, lim):  # type: ignore[no-untyped-def]
+    """Edit the shape of some elements, then the colour of some, add one, remove one, move one. ``seed`` starts the
+    thread's Numba generator, so a call depends only on its arguments. ``genome`` is not modified."""
+    np.random.seed(seed)
+    g = genome.copy()
+    picked = np.empty(g.shape[0], dtype=np.int64)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _edit_shape(g[picked[t]], lim)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _change_color(g[picked[t]], lim)
+    if np.random.random() < rate and g.shape[0] < lim[L_MAX_ELEMENTS]:
+        g = insert_row(g, np.random.randint(0, g.shape[0] + 1), _new_row(lim))
+    return drop_and_move(g, rate, lim, True)
 
 
 def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
                center: tuple[float, float] | None = None) -> Row:
     """Random slightly curved stroke centred on ``center`` (random if omitted), at most ``max_size`` long."""
-    low, high = _width_bounds(limits)
-    cx, cy = center if center is not None else (rng.random(), rng.random())
-    rgb = rgb if rgb is not None else (rng.random(), rng.random(), rng.random())
-    length = rng.uniform(0.3, 1.0) * limits.max_size
-    angle = rng.uniform(0, math.pi)
-    dx, dy = math.cos(angle) * length / 2, math.sin(angle) * length / 2
-    bend = rng.uniform(-0.3, 0.3) * length  # sideways offset of the control point
-    start = (clamp(cx - dx), clamp(cy - dy))
-    end = (clamp(cx + dx), clamp(cy + dy))
-    control = (clamp(cx - dy / (length / 2 or 1) * bend), clamp(cy + dx / (length / 2 or 1) * bend))
-    alpha = rng.uniform(max(limits.min_alpha, 0.1), min(limits.max_alpha, 0.6))
-    return make_row(start, control, end, rng.uniform(low, high), (*rgb, alpha))
+    cx, cy = center if center is not None else (-1.0, -1.0)  # -1: draw it at random
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    return _random_row_seeded(rng.getrandbits(32), limits_array(limits), cx, cy, r, g, b)
 
 
-def move_point(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.015) -> None:
-    """Move the start, the control point or the end in place; undone if the stroke would grow past the cap."""
-    before, old = row.copy(), extent(row)
-    column = rng.choice((X0, CX, X1))
-    row[column] = clamp(float(row[column]) + rng.gauss(0, sigma))
-    row[column + 1] = clamp(float(row[column + 1]) + rng.gauss(0, sigma))
-    if extent(row) > max(limits.max_size, old):  # never grow past the cap
-        row[:] = before
-
-
-def shift_stroke(row: np.ndarray, rng: Random, sigma: float = 0.02) -> None:
-    dx, dy = rng.gauss(0, sigma), rng.gauss(0, sigma)
-    for column in (X0, CX, X1):
-        row[column] = clamp(float(row[column]) + dx)
-        row[column + 1] = clamp(float(row[column + 1]) + dy)
-
-
-def resize(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.25) -> None:
-    """Scale the brush width by a log-normal factor; never grows past the cap (wider than it can only shrink)."""
-    low, high = _width_bounds(limits)
-    row[WIDTH] = clamp(float(row[WIDTH]) * math.exp(rng.gauss(0, sigma)), low, max(high, float(row[WIDTH])))
-
-
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in (RED, GREEN, BLUE):
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-    row[ALPHA] = clamp(float(row[ALPHA]) + rng.gauss(0, sigma), limits.min_alpha, limits.max_alpha)
-
-
-def _edit_shape(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    pick = rng.random()
-    if pick < 0.5:
-        move_point(row, rng, limits)
-    elif pick < 0.75:
-        shift_stroke(row, rng)
-    else:
-        resize(row, rng, limits)
-
-
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_stroke: float | None = None) -> Genome:
-    """Bend, move or thicken some strokes, recolour some, add / remove / reorder (see ``operators.mutate_rows``)."""
-    return mutate_rows(genome, rng, rate, limits, per_stroke, _edit_shape, change_color,
-                       lambda r, lim: random_row(r, lim))
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
+    """Bend, move or thicken some strokes, recolour some, add / remove / reorder (see ``kernels.mutate_rows``)."""
+    return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
+                   rate if per_element is None else per_element, limits_array(limits))
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -152,6 +224,11 @@ def _draw(genome, canvas, ox, oy, width, height):  # type: ignore[no-untyped-def
     """Paint the strokes on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     pts_x = np.empty(_MAX_SEGMENTS + 1, dtype=np.float64)
     pts_y = np.empty(_MAX_SEGMENTS + 1, dtype=np.float64)
+    seg_x = np.empty(_MAX_SEGMENTS, dtype=np.float64)
+    seg_y = np.empty(_MAX_SEGMENTS, dtype=np.float64)
+    seg_vx = np.empty(_MAX_SEGMENTS, dtype=np.float64)
+    seg_vy = np.empty(_MAX_SEGMENTS, dtype=np.float64)
+    seg_inv = np.empty(_MAX_SEGMENTS, dtype=np.float64)
     side = max(width, height)
     for k in range(genome.shape[0]):
         # The curve stays inside the box of its three points: skip, without flattening it, the strokes that cannot
@@ -173,22 +250,24 @@ def _draw(genome, canvas, ox, oy, width, height):  # type: ignore[no-untyped-def
         g = genome[k, GREEN] * alpha
         b = genome[k, BLUE] * alpha
         limit = half * half
+        for i in range(n):  # segment i as its start, its vector and 1 / its squared length (0 for a point)
+            seg_x[i], seg_y[i] = pts_x[i], pts_y[i]
+            seg_vx[i], seg_vy[i] = pts_x[i + 1] - pts_x[i], pts_y[i + 1] - pts_y[i]
+            span = seg_vx[i] * seg_vx[i] + seg_vy[i] * seg_vy[i]
+            seg_inv[i] = 0.0 if span == 0.0 else 1.0 / span
         for py in range(y0, y1):
             yc = py + 0.5
             for px in range(x0, x1):
                 xc = px + 0.5
-                best = 1e300
-                for i in range(n):  # squared distance from the pixel centre to segment i
-                    sx, sy = pts_x[i], pts_y[i]
-                    vx, vy = pts_x[i + 1] - sx, pts_y[i + 1] - sy
-                    span = vx * vx + vy * vy
-                    t = 0.0 if span == 0.0 else min(1.0, max(0.0, ((xc - sx) * vx + (yc - sy) * vy) / span))
-                    dx, dy = xc - (sx + t * vx), yc - (sy + t * vy)
-                    best = min(best, dx * dx + dy * dy)
-                if best <= limit:
-                    canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r
-                    canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g
-                    canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b
+                for i in range(n):  # the pixel is painted if its centre is within the brush of any segment
+                    t = min(1.0, max(0.0, ((xc - seg_x[i]) * seg_vx[i] + (yc - seg_y[i]) * seg_vy[i]) * seg_inv[i]))
+                    dx, dy = xc - (seg_x[i] + t * seg_vx[i]), yc - (seg_y[i] + t * seg_vy[i])
+                    if dx * dx + dy * dy <= limit:
+                        canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r
+                        canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g
+                        canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b
+                        break
+
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]

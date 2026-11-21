@@ -2,8 +2,24 @@
 evaluate several genomes in parallel."""
 from __future__ import annotations
 
+from functools import cache
+
 import numpy as np
 from numba import njit
+
+from .common import Limits
+
+# Positions in the float64 array ``limits_array`` makes from a ``Limits``, for the compiled mutation code.
+L_MIN_ELEMENTS, L_MAX_ELEMENTS, L_MIN_VERTICES, L_MAX_VERTICES, L_MIN_ALPHA, L_MAX_ALPHA, L_MAX_SIZE, L_MIN_SIZE = range(8)
+
+
+@cache
+def limits_array(limits: Limits) -> np.ndarray:
+    """The numbers of ``limits`` as a float64 array, in the order of the ``L_*`` constants (cached, read only)."""
+    values = np.array([limits.min_elements, limits.max_elements, limits.min_vertices, limits.max_vertices,
+                       limits.min_alpha, limits.max_alpha, limits.max_size, limits.min_size], dtype=np.float64)
+    values.setflags(write=False)
+    return values
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -133,3 +149,61 @@ def merge_boxes(boxes):  # type: ignore[no-untyped-def]
             result[m] = work[k]
             m += 1
     return result
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def clamp(value, low, high):  # type: ignore[no-untyped-def]
+    return low if value < low else min(value, high)
+
+
+@njit(cache=True, nogil=True)
+def pick(count, probability, out):  # type: ignore[no-untyped-def]
+    """Fill ``out`` with indices in ``range(count)`` picked independently with ``probability`` (geometric jumps: one
+    random number per pick); returns how many. ``out`` must hold ``count`` values."""
+    if probability >= 1.0:
+        for i in range(count):
+            out[i] = i
+        return count
+    if probability <= 0.0:
+        return 0
+    log_miss = np.log1p(-probability)
+    picked = 0
+    i = -1
+    while True:
+        i += 1 + int(np.log(1.0 - np.random.random()) / log_miss)
+        if i >= count:
+            return picked
+        out[picked] = i
+        picked += 1
+
+
+@njit(cache=True, nogil=True)
+def insert_row(genome, at, row):  # type: ignore[no-untyped-def]
+    out = np.empty((genome.shape[0] + 1, genome.shape[1]), dtype=genome.dtype)
+    out[:at] = genome[:at]
+    out[at] = row
+    out[at + 1 :] = genome[at:]
+    return out
+
+
+@njit(cache=True, nogil=True)
+def delete_row(genome, at):  # type: ignore[no-untyped-def]
+    out = np.empty((genome.shape[0] - 1, genome.shape[1]), dtype=genome.dtype)
+    out[:at] = genome[:at]
+    out[at:] = genome[at + 1 :]
+    return out
+
+
+@njit(cache=True, nogil=True)
+def drop_and_move(genome, rate, lim, reorder):  # type: ignore[no-untyped-def]
+    """The end of every shape's mutation: with probability ``rate`` remove one element, with probability ``rate`` move
+    one to another place in the drawing order (``reorder=False`` for shapes where the order does not matter).
+    Draws from the Numba generator the shape's ``_mutate`` seeded. Returns a new genome when it changes."""
+    g = genome
+    if np.random.random() < rate and g.shape[0] > lim[L_MIN_ELEMENTS]:
+        g = delete_row(g, np.random.randint(0, g.shape[0]))
+    if reorder and np.random.random() < rate and g.shape[0] > 1:  # change overlap order
+        source = np.random.randint(0, g.shape[0])
+        row = g[source].copy()
+        g = insert_row(delete_row(g, source), np.random.randint(0, g.shape[0]), row)
+    return g

@@ -21,9 +21,17 @@ from random import Random
 import numpy as np
 from numba import njit
 
-from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
-from ..core.operators import mutate_rows
+from ..core.common import Array, Genome, Limits, Row
+from ..core.kernels import (
+    L_MAX_ELEMENTS,
+    canvas_mse,
+    clamp,
+    drop_and_move,
+    fill,
+    insert_row,
+    limits_array,
+    pick,
+)
 from ..core.shape import Shape
 
 X, Y = 0, 1
@@ -42,30 +50,72 @@ def describe(genome: Genome) -> str:
                      for k, row in enumerate(genome))
 
 
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row(lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    """Seed at ``(cx, cy)`` with colour ``(r, g, b)``; negative values are drawn at random."""
+    if cx < 0.0:
+        cx, cy = np.random.random(), np.random.random()
+    if r < 0.0:
+        r, g, b = np.random.random(), np.random.random(), np.random.random()
+    row = np.empty(COLS, dtype=np.float32)
+    row[X], row[Y] = cx, cy
+    row[RED], row[GREEN], row[BLUE] = r, g, b
+    return row
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _new_row(lim):  # type: ignore[no-untyped-def]
+    return _random_row(lim, -1.0, -1.0, -1.0, -1.0, -1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
+    """Mostly a small nudge, sometimes a jump to a different spot."""
+    sigma = 0.01 if np.random.random() < 0.7 else 0.05
+    row[X] = clamp(row[X] + np.random.normal(0.0, sigma), 0.0, 1.0)
+    row[Y] = clamp(row[Y] + np.random.normal(0.0, sigma), 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _change_color(row, lim):  # type: ignore[no-untyped-def]
+    for channel in range(RED, BLUE + 1):
+        row[channel] = clamp(row[channel] + np.random.normal(0.0, 0.06), 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row_seeded(seed, lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    np.random.seed(seed)
+    return _random_row(lim, cx, cy, r, g, b)
+
+
+@njit(cache=True, nogil=True)
+def _mutate(genome, seed, rate, per_row, lim):  # type: ignore[no-untyped-def]
+    """Edit the shape of some elements, then the colour of some, add one, remove one, move one. ``seed`` starts the
+    thread's Numba generator, so a call depends only on its arguments. ``genome`` is not modified."""
+    np.random.seed(seed)
+    g = genome.copy()
+    picked = np.empty(g.shape[0], dtype=np.int64)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _edit_shape(g[picked[t]], lim)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _change_color(g[picked[t]], lim)
+    if np.random.random() < rate and g.shape[0] < lim[L_MAX_ELEMENTS]:
+        g = insert_row(g, np.random.randint(0, g.shape[0] + 1), _new_row(lim))
+    return drop_and_move(g, rate, lim, False)
+
+
 def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
                center: tuple[float, float] | None = None) -> Row:
     """Seed at ``center`` (random if omitted) with colour ``rgb`` (random if omitted)."""
-    cx, cy = center if center is not None else (rng.random(), rng.random())
-    rgb = rgb if rgb is not None else (rng.random(), rng.random(), rng.random())
-    return make_row(cx, cy, rgb)
+    cx, cy = center if center is not None else (-1.0, -1.0)  # -1: draw it at random
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    return _random_row_seeded(rng.getrandbits(32), limits_array(limits), cx, cy, r, g, b)
 
 
-def move(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    """Mostly a small nudge, sometimes a jump to a different spot."""
-    sigma = 0.01 if rng.random() < 0.7 else 0.05
-    row[X] = clamp(float(row[X]) + rng.gauss(0, sigma))
-    row[Y] = clamp(float(row[Y]) + rng.gauss(0, sigma))
-
-
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in (RED, GREEN, BLUE):
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-
-
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_point: float | None = None) -> Genome:
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
     """Move some seeds, recolour some, add / remove (the order does not matter, so there is no reorder)."""
-    return mutate_rows(genome, rng, rate, limits, per_point, move, change_color,
-                       lambda r, lim: random_row(r, lim), reorder=False)
+    return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
+                   rate if per_element is None else per_element, limits_array(limits))
 
 
 @njit(cache=True, nogil=True, fastmath=True)

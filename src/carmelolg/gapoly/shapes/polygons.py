@@ -29,9 +29,25 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill, merge_boxes, unmatched_rows, window_error
-from ..core.operators import mutate_rows
+from ..core.common import Array, Genome, Limits, Row
+from ..core.kernels import (
+    L_MAX_ALPHA,
+    L_MAX_ELEMENTS,
+    L_MAX_SIZE,
+    L_MAX_VERTICES,
+    L_MIN_ALPHA,
+    L_MIN_VERTICES,
+    canvas_mse,
+    clamp,
+    drop_and_move,
+    fill,
+    insert_row,
+    limits_array,
+    merge_boxes,
+    pick,
+    unmatched_rows,
+    window_error,
+)
 from ..core.shape import Shape
 
 MAX_VERTICES = 6
@@ -90,51 +106,111 @@ def describe(genome: Genome) -> str:
     return "\n".join(lines)
 
 
-def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
-               center: tuple[float, float] | None = None) -> Row:
-    """Small random polygon around ``center`` (random if omitted). ``rgb`` is the colour; alpha is random."""
-    spread = limits.max_size / 2
-    cx, cy = center if center is not None else (rng.random(), rng.random())
-    n = rng.randint(limits.min_vertices, limits.max_vertices)
-    points = [(clamp(cx + rng.uniform(-spread, spread)), clamp(cy + rng.uniform(-spread, spread))) for _ in range(n)]
-    rgb = rgb if rgb is not None else (rng.random(), rng.random(), rng.random())
-    return make_row(points, (*rgb, rng.uniform(max(limits.min_alpha, 0.1), min(limits.max_alpha, 0.6))))
+@njit(cache=True, nogil=True, fastmath=True)
+def _extent(row):  # type: ignore[no-untyped-def]
+    n = int(row[N_VERTICES])
+    min_x = max_x = row[VERTEX_START]
+    min_y = max_y = row[VERTEX_START + 1]
+    for v in range(1, n):
+        x, y = row[VERTEX_START + 2 * v], row[VERTEX_START + 2 * v + 1]
+        min_x, max_x = min(min_x, x), max(max_x, x)
+        min_y, max_y = min(min_y, y), max(max_y, y)
+    return max(max_x - min_x, max_y - min_y)
 
 
-def move_vertex(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.015) -> None:
-    """Move one vertex in place (``row`` is a private copy); undone if the polygon would grow past the cap."""
-    before, old = row.copy(), extent(row)
-    v = rng.randrange(int(row[N_VERTICES]))
-    row[X(v)] = clamp(float(row[X(v)]) + rng.gauss(0, sigma))
-    row[Y(v)] = clamp(float(row[Y(v)]) + rng.gauss(0, sigma))
-    if extent(row) > max(limits.max_size, old):  # never grow past the cap
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row(lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    """Small random polygon around ``(cx, cy)`` with colour ``(r, g, b)``; a negative value is drawn at random."""
+    spread = lim[L_MAX_SIZE] / 2
+    if cx < 0.0:
+        cx, cy = np.random.random(), np.random.random()
+    if r < 0.0:
+        r, g, b = np.random.random(), np.random.random(), np.random.random()
+    n = np.random.randint(int(lim[L_MIN_VERTICES]), int(lim[L_MAX_VERTICES]) + 1)
+    row = np.zeros(COLS, dtype=np.float32)
+    row[N_VERTICES] = n
+    for v in range(n):
+        row[VERTEX_START + 2 * v] = clamp(cx + np.random.uniform(-spread, spread), 0.0, 1.0)
+        row[VERTEX_START + 2 * v + 1] = clamp(cy + np.random.uniform(-spread, spread), 0.0, 1.0)
+    row[RED], row[GREEN], row[BLUE] = r, g, b
+    row[ALPHA] = np.random.uniform(max(lim[L_MIN_ALPHA], 0.1), min(lim[L_MAX_ALPHA], 0.6))
+    return row
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _new_row(lim):  # type: ignore[no-untyped-def]
+    return _random_row(lim, -1.0, -1.0, -1.0, -1.0, -1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _move_vertex(row, lim):  # type: ignore[no-untyped-def]
+    """Move one vertex in place; undone if the polygon would grow past the cap."""
+    before = row.copy()
+    old = _extent(row)
+    v = np.random.randint(0, int(row[N_VERTICES]))
+    row[VERTEX_START + 2 * v] = clamp(row[VERTEX_START + 2 * v] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    row[VERTEX_START + 2 * v + 1] = clamp(row[VERTEX_START + 2 * v + 1] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    if _extent(row) > max(lim[L_MAX_SIZE], old):  # never grow past the cap
         row[:] = before
 
 
-def shift_polygon(row: np.ndarray, rng: Random, sigma: float = 0.02) -> None:
-    dx, dy = rng.gauss(0, sigma), rng.gauss(0, sigma)
+@njit(cache=True, nogil=True, fastmath=True)
+def _shift_polygon(row, lim):  # type: ignore[no-untyped-def]
+    dx, dy = np.random.normal(0.0, 0.02), np.random.normal(0.0, 0.02)
     for v in range(int(row[N_VERTICES])):
-        row[X(v)] = clamp(float(row[X(v)]) + dx)
-        row[Y(v)] = clamp(float(row[Y(v)]) + dy)
+        row[VERTEX_START + 2 * v] = clamp(row[VERTEX_START + 2 * v] + dx, 0.0, 1.0)
+        row[VERTEX_START + 2 * v + 1] = clamp(row[VERTEX_START + 2 * v + 1] + dy, 0.0, 1.0)
 
 
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in range(RED, GREEN + 2):  # red, green, blue
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-    row[ALPHA] = clamp(float(row[ALPHA]) + rng.gauss(0, sigma), limits.min_alpha, limits.max_alpha)
-
-
-def _edit_polygon(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    if rng.random() < 0.7:
-        move_vertex(row, rng, limits)
+@njit(cache=True, nogil=True, fastmath=True)
+def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
+    if np.random.random() < 0.7:
+        _move_vertex(row, lim)
     else:
-        shift_polygon(row, rng)
+        _shift_polygon(row, lim)
 
 
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_polygon: float | None = None) -> Genome:
-    """Move or reshape some polygons, recolour some, add / remove / reorder (see ``operators.mutate_rows``)."""
-    return mutate_rows(genome, rng, rate, limits, per_polygon, _edit_polygon, change_color,
-                       lambda r, lim: random_row(r, lim))
+@njit(cache=True, nogil=True, fastmath=True)
+def _change_color(row, lim):  # type: ignore[no-untyped-def]
+    for channel in range(RED, BLUE + 1):
+        row[channel] = clamp(row[channel] + np.random.normal(0.0, 0.06), 0.0, 1.0)
+    row[ALPHA] = clamp(row[ALPHA] + np.random.normal(0.0, 0.06), lim[L_MIN_ALPHA], lim[L_MAX_ALPHA])
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row_seeded(seed, lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    np.random.seed(seed)
+    return _random_row(lim, cx, cy, r, g, b)
+
+
+@njit(cache=True, nogil=True)
+def _mutate(genome, seed, rate, per_row, lim):  # type: ignore[no-untyped-def]
+    """Edit the shape of some elements, then the colour of some, add one, remove one, move one. ``seed`` starts the
+    thread's Numba generator, so a call depends only on its arguments. ``genome`` is not modified."""
+    np.random.seed(seed)
+    g = genome.copy()
+    picked = np.empty(g.shape[0], dtype=np.int64)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _edit_shape(g[picked[t]], lim)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _change_color(g[picked[t]], lim)
+    if np.random.random() < rate and g.shape[0] < lim[L_MAX_ELEMENTS]:
+        g = insert_row(g, np.random.randint(0, g.shape[0] + 1), _new_row(lim))
+    return drop_and_move(g, rate, lim, True)
+
+
+def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
+               center: tuple[float, float] | None = None) -> Row:
+    """Small random polygon around ``center`` (random if omitted). ``rgb`` is the colour; alpha is random."""
+    cx, cy = center if center is not None else (-1.0, -1.0)  # -1: draw it at random
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    return _random_row_seeded(rng.getrandbits(32), limits_array(limits), cx, cy, r, g, b)
+
+
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
+    """Move or reshape some polygons, recolour some, add / remove / reorder (see ``kernels.mutate_rows``)."""
+    return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
+                   rate if per_element is None else per_element, limits_array(limits))
 
 
 @njit(cache=True, nogil=True, fastmath=True)
