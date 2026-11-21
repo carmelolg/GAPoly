@@ -74,7 +74,9 @@ Esempi:
                      --start-size 0.3 --max-size 0.08
 
 Tempi:
-  Una generazione costa circa population x elements x size². Parti da valori piccoli,
+  Una generazione costa circa population x (area ridisegnata per figlio): un figlio che è solo mutato
+  ridisegna soltanto i pixel toccati dalle modifiche, uno nato da crossover (e ogni figlio con --shape voronoi)
+  l'immagine intera, che costa elements x size². Parti da valori piccoli,
   leggi i secondi per generazione nel log (ogni 50) e poi scala.
   A parità di tempo, poca popolazione e molte generazioni rendono di più di una popolazione enorme.
 
