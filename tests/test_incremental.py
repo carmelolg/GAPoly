@@ -32,8 +32,8 @@ def genome_for(shape, count=20, seed=5):
     return np.ascontiguousarray(genome)
 
 
-def image_problem(name, seed=1, **kwargs):
-    return ImageProblem(target_image(seed), LIMITS, kwargs.pop("initial_elements", 25), 3.0, SHAPES[name], **kwargs)
+def image_problem(name, seed=1, initial_elements=25, **kwargs):
+    return ImageProblem(target_image(seed), LIMITS, initial_elements, 3.0, SHAPES[name], **kwargs)
 
 
 def parent_of(problem, genome):
@@ -135,10 +135,6 @@ def rows(*values):
     return np.array([[v, v + 0.5] for v in values], dtype=np.float32).reshape(-1, 2)
 
 
-def diff(parent, child, limit=8):
-    old, new, n_old, n_new = kernels.unmatched_rows(parent, child, limit)
-    return list(old[: max(n_old, 0)]), list(new[: max(n_new, 0)]), n_old
-
 
 @pytest.mark.parametrize("function", [kernels.unmatched_rows, kernels.unmatched_rows.py_func])
 def test_unmatched_rows_pairs_identical_rows_in_order(function):
@@ -153,7 +149,7 @@ def test_unmatched_rows_pairs_identical_rows_in_order(function):
     assert run(rows(1, 2, 3), rows(1, 2, 3, 4)) == ([], [3])  # appended
     assert run(rows(1, 2, 3, 4), rows(1, 2, 3)) == ([3], [])  # last one removed
     assert run(rows(1, 2, 3, 4), rows(2, 3, 4, 1)) == ([0], [3])  # moved to the end
-    assert run(rows(1, 2, 3, 4), rows(2, 1, 3, 4)) == ([0], [1]) or run(rows(1, 2, 3, 4), rows(2, 1, 3, 4)) == ([1], [0])
+    assert run(rows(1, 2, 3, 4), rows(2, 1, 3, 4)) in (([0], [1]), ([1], [0]))  # a swap: either row counts as moved
     assert run(rows(), rows(1, 2)) == ([], [0, 1])
     assert run(rows(1, 2), rows()) == ([0, 1], [])
     assert run(rows(), rows()) == ([], [])
@@ -204,3 +200,9 @@ def test_a_run_reports_the_error_of_the_genome_it_returns(name):
                               crossover_rate=0.3, diversity=None).run()
     assert result.best.fitness == pytest.approx(problem.fitness(result.best.genome), rel=1e-6)
     assert all(i.fitness == pytest.approx(problem.fitness(i.genome), rel=1e-6) for i in result.population)
+
+
+@pytest.mark.parametrize("function", [kernels.covered_pixels, kernels.covered_pixels.py_func])
+def test_covered_pixels_adds_up_the_windows(function):
+    assert function(np.array([[0, 4, 0, 3], [10, 12, 5, 6]], dtype=np.int64)) == 4 * 3 + 2 * 1
+    assert function(np.empty((0, 4), dtype=np.int64)) == 0

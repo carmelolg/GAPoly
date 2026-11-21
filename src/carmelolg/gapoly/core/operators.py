@@ -1,4 +1,4 @@
-"""Crossover on array genomes, for every shape (mutation is compiled: ``kernels.mutate_rows``). Inputs are never modified."""
+"""Crossover on array genomes, for every shape (mutation is compiled, per shape). Inputs are never modified."""
 from __future__ import annotations
 
 from random import Random

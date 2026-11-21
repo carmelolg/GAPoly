@@ -1,5 +1,6 @@
-"""Numba helpers shared by the rasterisers of every shape. The kernels release the GIL (``nogil``), so threads
-evaluate several genomes in parallel."""
+"""Numba helpers shared by every shape: the rasteriser pieces (fill, error of a window), the diff between a parent and
+a child genome and the windows to redraw, and the shared part of the mutation. The kernels release the GIL
+(``nogil``), so threads evaluate several genomes in parallel."""
 from __future__ import annotations
 
 from functools import cache
@@ -9,7 +10,9 @@ from numba import njit
 
 from .common import Limits
 
-# Positions in the float64 array ``limits_array`` makes from a ``Limits``, for the compiled mutation code.
+# Positions in the float64 array ``limits_array`` makes from a ``Limits``, for the compiled mutation code (``lim`` in the
+# kernels is that array, ``limits`` in Python the ``Limits`` object). The editors of a shape all take ``(row, lim)``, even
+# when they do not read ``lim``, so that they can be called alike.
 L_MIN_ELEMENTS, L_MAX_ELEMENTS, L_MIN_VERTICES, L_MAX_VERTICES, L_MIN_ALPHA, L_MAX_ALPHA, L_MAX_SIZE, L_MIN_SIZE = range(8)
 
 
@@ -117,6 +120,15 @@ def unmatched_rows(parent, child, limit):  # type: ignore[no-untyped-def]
 
 
 @njit(cache=True, nogil=True)
+def covered_pixels(windows):  # type: ignore[no-untyped-def]
+    """Number of pixels in ``windows``, boxes ``(x0, x1, y0, y1)`` that do not overlap (see ``merge_boxes``)."""
+    total = 0
+    for w in range(windows.shape[0]):
+        total += (windows[w, 1] - windows[w, 0]) * (windows[w, 3] - windows[w, 2])
+    return total
+
+
+@njit(cache=True, nogil=True)
 def merge_boxes(boxes):  # type: ignore[no-untyped-def]
     """Replace boxes ``(x0, x1, y0, y1)`` that overlap by their bounding box, until none overlap. Empty boxes
     (``x1 <= x0`` or ``y1 <= y0``) are dropped. Returns the surviving boxes, a new ``(m, 4)`` int64 array."""
@@ -153,6 +165,7 @@ def merge_boxes(boxes):  # type: ignore[no-untyped-def]
 
 @njit(cache=True, nogil=True, fastmath=True)
 def clamp(value, low, high):  # type: ignore[no-untyped-def]
+    """``value`` limited to ``[low, high]``."""
     return low if value < low else min(value, high)
 
 
@@ -179,6 +192,7 @@ def pick(count, probability, out):  # type: ignore[no-untyped-def]
 
 @njit(cache=True, nogil=True)
 def insert_row(genome, at, row):  # type: ignore[no-untyped-def]
+    """A copy of ``genome`` with ``row`` inserted before position ``at``."""
     out = np.empty((genome.shape[0] + 1, genome.shape[1]), dtype=genome.dtype)
     out[:at] = genome[:at]
     out[at] = row
@@ -188,6 +202,7 @@ def insert_row(genome, at, row):  # type: ignore[no-untyped-def]
 
 @njit(cache=True, nogil=True)
 def delete_row(genome, at):  # type: ignore[no-untyped-def]
+    """A copy of ``genome`` without the row at position ``at``."""
     out = np.empty((genome.shape[0] - 1, genome.shape[1]), dtype=genome.dtype)
     out[:at] = genome[:at]
     out[at:] = genome[at + 1 :]

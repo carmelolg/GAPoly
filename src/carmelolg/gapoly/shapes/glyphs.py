@@ -35,6 +35,7 @@ from ..core.kernels import (
     L_MIN_SIZE,
     canvas_mse,
     clamp,
+    covered_pixels,
     drop_and_move,
     fill,
     insert_row,
@@ -54,6 +55,7 @@ GLYPHS = "#%&*+=?@/\\|<>()[]{}~^:;-_oOxXzZ01"  # dark and light characters, roun
 ATLAS_SIZE = 48  # side in pixels of each character mask
 
 _MIN_HALF_PX = 0.7072  # a glyph box always reaches the centre of the pixel it sits in
+_SQRT2 = 1.4143  # a square box turned by any angle fits in a circle of this many half-sides
 
 
 def make_row(x: float, y: float, size: float, angle: float, glyph: float,
@@ -148,12 +150,12 @@ def _rotate(row, lim):  # type: ignore[no-untyped-def]
 
 @njit(cache=True, nogil=True, fastmath=True)
 def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
-    pick = np.random.random()
-    if pick < 0.35:
+    choice = np.random.random()
+    if choice < 0.35:
         _move(row, lim)
-    elif pick < 0.65:
+    elif choice < 0.65:
         _resize(row, lim)
-    elif pick < 0.85:
+    elif choice < 0.85:
         _rotate(row, lim)
     else:
         row[GLYPH] = np.random.random()
@@ -227,7 +229,7 @@ def _sample(mask, u, v):  # type: ignore[no-untyped-def]
 @njit(cache=True, nogil=True, fastmath=True)
 def _box(row, width, height):  # type: ignore[no-untyped-def]
     """Pixels ``(x0, x1, y0, y1)`` a glyph row can paint (the circle around its rotated box)."""
-    reach = max(row[SIZE] * max(width, height) / 2, _MIN_HALF_PX) * 1.4143
+    reach = max(row[SIZE] * max(width, height) / 2, _MIN_HALF_PX) * _SQRT2
     cx, cy = row[X] * width, row[Y] * height
     return (max(0, int(np.floor(cx - reach))), min(width, int(np.ceil(cx + reach)) + 1),
             max(0, int(np.floor(cy - reach))), min(height, int(np.ceil(cy + reach)) + 1))
@@ -312,14 +314,10 @@ def delta_sse(before, after, target, background, max_rows, max_pixels, masks):  
         return 0.0
     areas = np.empty((n_old + n_new, 4), dtype=np.int64)
     for k in range(n_old + n_new):
-        at = k
         row = before[old_rows[k]] if k < n_old else after[new_rows[k - n_old]]
-        areas[at, 0], areas[at, 1], areas[at, 2], areas[at, 3] = _box(row, width, height)
+        areas[k, 0], areas[k, 1], areas[k, 2], areas[k, 3] = _box(row, width, height)
     windows = merge_boxes(areas)
-    pixels = 0
-    for w in range(windows.shape[0]):
-        pixels += (windows[w, 1] - windows[w, 0]) * (windows[w, 3] - windows[w, 2])
-    if pixels > max_pixels:
+    if covered_pixels(windows) > max_pixels:
         return np.nan
     delta = 0.0
     for w in range(windows.shape[0]):

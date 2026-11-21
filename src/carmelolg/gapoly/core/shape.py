@@ -28,9 +28,11 @@ class Shape(ABC):
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         """Mean squared error between the drawn genome and ``target`` (one compiled loop, no image is built)."""
 
-    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int, y1: int) -> float:
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
         """Sum of squared errors of the drawn genome over the pixels ``x0 <= x < x1``, ``y0 <= y < y1``, drawing only
-        that window. A shape with ``incremental = True`` implements it, with ``boxes``."""
+        that window. A shape with ``incremental = True`` implements ``delta_sse`` (what ``ImageProblem`` calls) and,
+        for tests and debugging, this and ``boxes``."""
         raise NotImplementedError(f"{type(self).__name__} cannot be evaluated by windows")
 
     def delta_sse(self, before: Genome, after: Genome, target: Array, background: Array, max_rows: int,

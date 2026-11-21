@@ -5,6 +5,7 @@ Numba compiled) and must give the same pixels as the compiled one: this checks t
 """
 import runpy
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from random import Random
 from types import SimpleNamespace
 
@@ -104,7 +105,8 @@ def test_pick_chooses_nothing_at_probability_zero_and_everything_at_one(pick):
     assert pick(5, 0.0, out) == 0
     assert pick(5, 1.0, out) == 5 and list(out) == [0, 1, 2, 3, 4]
     np.random.seed(0)
-    assert 0 < pick(5, 0.5, out) <= 5 or pick(5, 0.5, out) == 0  # in range either way
+    n = pick(5, 0.5, out)
+    assert 0 <= n <= 5 and list(out[:n]) == sorted(set(out[:n]))  # increasing indices, no repeats
 
 
 def test_colorize_leaves_text_that_is_already_coloured():
@@ -163,7 +165,7 @@ def box_helper(name, row):
     """The pixel box of one row, from the Python source of the shape's box helper."""
     module = KERNEL_MODULES[name]
     if name == "stroke":
-        return module._curve.py_func(row, WIDTH, HEIGHT, np.empty(33), np.empty(33))[2:]
+        return module._curve.py_func(row, WIDTH, HEIGHT, np.empty(strokes._MAX_SEGMENTS + 1), np.empty(strokes._MAX_SEGMENTS + 1))[2:]
     if name == "mosaic":
         return module._tile.py_func(row, WIDTH, HEIGHT)[3:]
     return module._box.py_func(row, WIDTH, HEIGHT)
@@ -188,7 +190,7 @@ def test_window_kernels_python_source_gives_the_same_numbers_as_the_compiled_one
     assert [tuple(box_helper(name, row)) for row in genome] == [tuple(box) for box in boxes]
 
 
-def test_shared_row_comparison_and_boxes_python_source():
+def test_same_row_python_source():
     a = np.array([1, 2, 3], dtype=np.float32)
     assert kernels._same_row.py_func(a, a.copy())
     assert not kernels._same_row.py_func(a, a + np.array([0, 0, 1], dtype=np.float32))
@@ -294,34 +296,39 @@ def test_python_source_of_the_whole_mutation_covers_every_operation(name):
 
 
 def test_a_mutation_depends_only_on_its_seed_and_arguments_whatever_the_thread():
-    from concurrent.futures import ThreadPoolExecutor
-
     genome = valid_genome(SHAPES["polygon"])
     expected = polygons._mutate(genome, 9, 0.4, 0.3, LIM)
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: polygons._mutate(genome, 9, 0.4, 0.3, LIM), range(16)))
     assert all((r == expected).all() for r in results)
-    assert not (polygons._mutate(genome, 10, 0.4, 0.3, LIM).shape == expected.shape and
-                (polygons._mutate(genome, 10, 0.4, 0.3, LIM) == expected).all())
+    other = polygons._mutate(genome, 10, 0.4, 0.3, LIM)  # another seed, another child
+    assert not (other.shape == expected.shape and (other == expected).all())
 
 
-@pytest.mark.parametrize("function", ["insert_row", "delete_row", "drop_and_move", "clamp"])
-def test_python_source_of_the_row_kernels(function):
-    fn = getattr(kernels, function).py_func
+def test_insert_row_python_source():
     genome = np.arange(12, dtype=np.float32).reshape(4, 3)
-    if function == "insert_row":
-        out = fn(genome, 1, np.full(3, 99, dtype=np.float32))
-        assert out.shape == (5, 3) and (out[1] == 99).all() and (out[2] == genome[1]).all()
-    elif function == "delete_row":
-        assert (fn(genome, 1) == np.delete(genome, 1, axis=0)).all()
-    elif function == "drop_and_move":
-        np.random.seed(2)
-        for reorder in (True, False):
-            out = fn(genome, 1.0, LIM, reorder)
-            assert len(out) == 3 and all(tuple(row) in set(map(tuple, genome.tolist())) for row in out)  # one went away
-        assert fn(genome[:1], 1.0, LIM, True).shape == (1, 3)  # one element: kept
-    else:
-        assert fn(-1.0, 0.0, 1.0) == 0.0 and fn(2.0, 0.0, 1.0) == 1.0 and fn(0.4, 0.0, 1.0) == 0.4
+    out = kernels.insert_row.py_func(genome, 1, np.full(3, 99, dtype=np.float32))
+    assert out.shape == (5, 3) and (out[1] == 99).all() and (out[2] == genome[1]).all() and (out[0] == genome[0]).all()
+
+
+def test_delete_row_python_source():
+    genome = np.arange(12, dtype=np.float32).reshape(4, 3)
+    assert (kernels.delete_row.py_func(genome, 1) == np.delete(genome, 1, axis=0)).all()
+
+
+@pytest.mark.parametrize("reorder", [True, False])
+def test_drop_and_move_python_source(reorder):
+    genome = np.arange(12, dtype=np.float32).reshape(4, 3)
+    np.random.seed(2)
+    out = kernels.drop_and_move.py_func(genome, 1.0, LIM, reorder)
+    assert len(out) == 3 and all(tuple(row) in set(map(tuple, genome.tolist())) for row in out)  # one went away
+    assert kernels.drop_and_move.py_func(genome[:1], 1.0, LIM, reorder).shape == (1, 3)  # the last one stays
+
+
+def test_clamp_python_source():
+    clamp = kernels.clamp.py_func
+    assert clamp(-1.0, 0.0, 1.0) == 0.0 and clamp(2.0, 0.0, 1.0) == 1.0 and clamp(0.4, 0.0, 1.0) == 0.4
+
 
 
 @pytest.mark.parametrize("name", ["polygon", "stroke"])

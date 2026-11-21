@@ -17,7 +17,8 @@ Example: a half-transparent red triangle::
     [3,  0.10 0.10,  0.30 0.10,  0.20 0.30,  0 0 0 0 0 0,  1.0 0.0 0.0 0.5]
 
 Never index a row with bare numbers: use ``N_VERTICES``, ``X(v)``, ``Y(v)``, ``RED``..``ALPHA``, ``vertices``,
-``color`` and ``make_row``. ``describe(genome)`` prints a genome as text, handy when debugging.
+``color`` and ``make_row`` (the compiled kernels cannot call the Python helpers: they write the same offsets out as
+``VERTEX_START + 2 * v``). ``describe(genome)`` prints a genome as text, handy when debugging.
 
 The rasteriser samples pixels at their centres and a polygon covers a pixel by the even-odd rule.
 """
@@ -39,6 +40,7 @@ from ..core.kernels import (
     L_MIN_VERTICES,
     canvas_mse,
     clamp,
+    covered_pixels,
     drop_and_move,
     fill,
     insert_row,
@@ -208,7 +210,7 @@ def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | No
 
 
 def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
-    """Move or reshape some polygons, recolour some, add / remove / reorder (see ``kernels.mutate_rows``)."""
+    """Move or reshape some polygons, recolour some, add / remove / reorder."""
     return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
                    rate if per_element is None else per_element, limits_array(limits))
 
@@ -310,14 +312,10 @@ def delta_sse(before, after, target, background, max_rows, max_pixels):  # type:
         return 0.0
     areas = np.empty((n_old + n_new, 4), dtype=np.int64)
     for k in range(n_old + n_new):
-        at = k
         row = before[old_rows[k]] if k < n_old else after[new_rows[k - n_old]]
-        areas[at, 0], areas[at, 1], areas[at, 2], areas[at, 3] = _box(row, width, height)
+        areas[k, 0], areas[k, 1], areas[k, 2], areas[k, 3] = _box(row, width, height)
     windows = merge_boxes(areas)
-    pixels = 0
-    for w in range(windows.shape[0]):
-        pixels += (windows[w, 1] - windows[w, 0]) * (windows[w, 3] - windows[w, 2])
-    if pixels > max_pixels:
+    if covered_pixels(windows) > max_pixels:
         return np.nan
     delta = 0.0
     for w in range(windows.shape[0]):
