@@ -30,7 +30,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
+from ..core.kernels import canvas_mse, fill, window_error
 from ..core.operators import mutate_rows
 from ..core.shape import Shape
 
@@ -138,23 +138,39 @@ def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_polygon
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def _draw(genome, canvas):  # type: ignore[no-untyped-def]
-    height, width = canvas.shape[0], canvas.shape[1]
+def _box(row, width, height):  # type: ignore[no-untyped-def]
+    """Pixels ``(x0, x1, y0, y1)`` a polygon row can paint (empty for fewer than 3 vertices)."""
+    n = int(row[N_VERTICES])
+    if n < 3:
+        return 0, 0, 0, 0
+    min_x, max_x = width, 0.0
+    min_y, max_y = height, 0.0
+    for v in range(n):
+        x = row[VERTEX_START + 2 * v] * width
+        y = row[VERTEX_START + 2 * v + 1] * height
+        min_x, max_x = min(min_x, x), max(max_x, x)
+        min_y, max_y = min(min_y, y), max(max_y, y)
+    return (max(0, int(np.floor(min_x))), min(width, int(np.ceil(max_x)) + 1),
+            max(0, int(np.floor(min_y))), min(height, int(np.ceil(max_y)) + 1))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _draw(genome, canvas, ox, oy, width, height):  # type: ignore[no-untyped-def]
+    """Paint the polygons on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     xs = np.empty(MAX_VERTICES, dtype=np.float32)
     ys = np.empty(MAX_VERTICES, dtype=np.float32)
     for k in range(genome.shape[0]):
         n = int(genome[k, N_VERTICES])
         if n < 3:
             continue
-        min_x, max_x = width, 0.0
-        min_y, max_y = height, 0.0
+        x0, x1, y0, y1 = _box(genome[k], width, height)
+        x0, x1 = max(x0, ox), min(x1, ox + canvas.shape[1])
+        y0, y1 = max(y0, oy), min(y1, oy + canvas.shape[0])
+        if x1 <= x0 or y1 <= y0:
+            continue
         for v in range(n):
             xs[v] = genome[k, VERTEX_START + 2 * v] * width
             ys[v] = genome[k, VERTEX_START + 2 * v + 1] * height
-            min_x, max_x = min(min_x, xs[v]), max(max_x, xs[v])
-            min_y, max_y = min(min_y, ys[v]), max(max_y, ys[v])
-        x0, x1 = max(0, int(np.floor(min_x))), min(width, int(np.ceil(max_x)) + 1)
-        y0, y1 = max(0, int(np.floor(min_y))), min(height, int(np.ceil(max_y)) + 1)
         alpha = genome[k, ALPHA]
         keep = 1.0 - alpha
         r = genome[k, RED] * alpha
@@ -171,15 +187,14 @@ def _draw(genome, canvas):  # type: ignore[no-untyped-def]
                         inside = not inside
                     j = i
                 if inside:
-                    canvas[py, px, 0] = canvas[py, px, 0] * keep + r
-                    canvas[py, px, 1] = canvas[py, px, 1] * keep + g
-                    canvas[py, px, 2] = canvas[py, px, 2] * keep + b
-
+                    canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r
+                    canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g
+                    canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]
     fill(canvas, background)
-    _draw(genome, canvas)
+    _draw(genome, canvas, 0, 0, canvas.shape[1], canvas.shape[0])
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -187,6 +202,23 @@ def render_mse(genome, target, background):  # type: ignore[no-untyped-def]
     canvas = np.empty_like(target)
     render_into(genome, background, canvas)
     return canvas_mse(canvas, target)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_sse(genome, target, background, x0, y0, x1, y1):  # type: ignore[no-untyped-def]
+    """Squared error over the window ``x0 <= x < x1``, ``y0 <= y < y1``: only that window is drawn."""
+    canvas = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+    fill(canvas, background)
+    _draw(genome, canvas, x0, y0, target.shape[1], target.shape[0])
+    return window_error(canvas, target, x0, y0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def boxes(rows, width, height):  # type: ignore[no-untyped-def]
+    out = np.empty((rows.shape[0], 4), dtype=np.int64)
+    for k in range(rows.shape[0]):
+        out[k, 0], out[k, 1], out[k, 2], out[k, 3] = _box(rows[k], width, height)
+    return out
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray) -> np.ndarray:
@@ -205,6 +237,13 @@ class PolygonShape(Shape):
 
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         return float(render_mse(genome, target, background))
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
+        return float(window_sse(genome, target, background, x0, y0, x1, y1))
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        return boxes(rows, width, height)
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)

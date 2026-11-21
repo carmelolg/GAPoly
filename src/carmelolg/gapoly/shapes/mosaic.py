@@ -29,7 +29,7 @@ import numpy as np
 from numba import njit
 
 from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
+from ..core.kernels import canvas_mse, fill, window_error
 from ..core.operators import mutate_rows
 from ..core.shape import Shape
 
@@ -133,15 +133,26 @@ def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_tile: f
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def _draw(genome, canvas):  # type: ignore[no-untyped-def]
-    height, width = canvas.shape[0], canvas.shape[1]
-    side = max(width, height)
+def _tile(row, width, height):  # type: ignore[no-untyped-def]
+    """The tile of a row: radius and centre of its lattice hexagon in pixels, and the pixels ``(x0, x1, y0, y1)``
+    it can paint."""
+    radius = max(quantise(row[RADIUS]) * max(width, height), _MIN_RADIUS_PX)
+    hx, hy = snap(row[X] * width, row[Y] * height, radius)
+    half_height = 0.5 * _SQRT3 * radius
+    return (radius, hx, hy, max(0, int(np.floor(hx - radius))), min(width, int(np.ceil(hx + radius)) + 1),
+            max(0, int(np.floor(hy - half_height))), min(height, int(np.ceil(hy + half_height)) + 1))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _draw(genome, canvas, ox, oy, width, height):  # type: ignore[no-untyped-def]
+    """Paint the tiles on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     for k in range(genome.shape[0]):
-        radius = max(quantise(genome[k, RADIUS]) * side, _MIN_RADIUS_PX)
-        hx, hy = snap(genome[k, X] * width, genome[k, Y] * height, radius)
+        radius, hx, hy, x0, x1, y0, y1 = _tile(genome[k], width, height)
+        x0, x1 = max(x0, ox), min(x1, ox + canvas.shape[1])
+        y0, y1 = max(y0, oy), min(y1, oy + canvas.shape[0])
+        if x1 <= x0 or y1 <= y0:
+            continue
         half_height = 0.5 * _SQRT3 * radius
-        x0, x1 = max(0, int(np.floor(hx - radius))), min(width, int(np.ceil(hx + radius)) + 1)
-        y0, y1 = max(0, int(np.floor(hy - half_height))), min(height, int(np.ceil(hy + half_height)) + 1)
         r = genome[k, RED]
         g = genome[k, GREEN]
         b = genome[k, BLUE]
@@ -152,15 +163,14 @@ def _draw(genome, canvas):  # type: ignore[no-untyped-def]
             reach = radius - dy / _SQRT3  # half the width of the hexagon at this height
             for px in range(x0, x1):
                 if abs(px + 0.5 - hx) <= reach:
-                    canvas[py, px, 0] = r
-                    canvas[py, px, 1] = g
-                    canvas[py, px, 2] = b
-
+                    canvas[py - oy, px - ox, 0] = r
+                    canvas[py - oy, px - ox, 1] = g
+                    canvas[py - oy, px - ox, 2] = b
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]
     fill(canvas, background)
-    _draw(genome, canvas)
+    _draw(genome, canvas, 0, 0, canvas.shape[1], canvas.shape[0])
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -168,6 +178,23 @@ def render_mse(genome, target, background):  # type: ignore[no-untyped-def]
     canvas = np.empty_like(target)
     render_into(genome, background, canvas)
     return canvas_mse(canvas, target)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_sse(genome, target, background, x0, y0, x1, y1):  # type: ignore[no-untyped-def]
+    """Squared error over the window ``x0 <= x < x1``, ``y0 <= y < y1``: only that window is drawn."""
+    canvas = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+    fill(canvas, background)
+    _draw(genome, canvas, x0, y0, target.shape[1], target.shape[0])
+    return window_error(canvas, target, x0, y0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def boxes(rows, width, height):  # type: ignore[no-untyped-def]
+    out = np.empty((rows.shape[0], 4), dtype=np.int64)
+    for k in range(rows.shape[0]):
+        _, _, _, out[k, 0], out[k, 1], out[k, 2], out[k, 3] = _tile(rows[k], width, height)
+    return out
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray) -> np.ndarray:
@@ -186,6 +213,13 @@ class MosaicShape(Shape):
 
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         return float(render_mse(genome, target, background))
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
+        return float(window_sse(genome, target, background, x0, y0, x1, y1))
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        return boxes(rows, width, height)
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)

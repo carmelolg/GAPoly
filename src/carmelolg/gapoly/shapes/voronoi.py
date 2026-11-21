@@ -151,6 +151,7 @@ class VoronoiShape(Shape):
     plural = "seeds"
     cols = COLS
     uses_size = False
+    incremental = False  # moving one seed can change cells anywhere: always drawn in full
     default_elements = 1000
     default_initial = 150
 

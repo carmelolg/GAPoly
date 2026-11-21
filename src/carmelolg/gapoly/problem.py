@@ -4,12 +4,16 @@ from __future__ import annotations
 from random import Random
 
 import numpy as np
-from carmelolg.galib import Problem
+from carmelolg.galib import Individual, Problem
 
 from .core import operators
 from .core.common import Array, Genome, Limits
+from .core.kernels import merge_boxes, unmatched_rows
 from .core.shape import Shape
 from .shapes import POLYGON
+
+MAX_CHANGED_ROWS = 64  # a child that differs from its parent in more rows than this is drawn in full
+MAX_REDRAWN = 0.5  # ... and so is one whose changed windows cover more than this fraction of the image
 
 
 class ImageProblem(Problem[Genome]):
@@ -42,6 +46,34 @@ class ImageProblem(Problem[Genome]):
 
     def fitness(self, genome: Genome) -> float:
         return self.shape.render_mse(genome, self.target, self._background)
+
+    def fitness_from_parent(self, genome: Genome, parent: Individual[Genome]) -> float:
+        """The error of a mutated child from its parent's, drawing only the pixels the changes can touch.
+
+        Elements the child shares with the parent, in the same order, paint the same pixels. So the error differs
+        only inside the boxes of the elements that were added, removed or edited (before and after): the two
+        genomes are drawn in those windows alone and the difference of the squared errors is added to the parent's.
+        """
+        shape = self.shape
+        if not shape.incremental:
+            return self.fitness(genome)
+        before, after = parent.genome, genome
+        old_rows, new_rows, n_old, n_new = unmatched_rows(before, after, MAX_CHANGED_ROWS)
+        if n_old < 0:
+            return self.fitness(genome)
+        if n_old == 0 and n_new == 0:
+            return parent.fitness
+        areas = np.concatenate((shape.boxes(before[old_rows[:n_old]], self.width, self.height),
+                                shape.boxes(after[new_rows[:n_new]], self.width, self.height)))
+        windows = merge_boxes(areas)
+        pixels = int(((windows[:, 1] - windows[:, 0]) * (windows[:, 3] - windows[:, 2])).sum())
+        if pixels > MAX_REDRAWN * self.width * self.height:
+            return self.fitness(genome)
+        delta = 0.0
+        for x0, x1, y0, y1 in windows:
+            delta += (shape.window_sse(after, self.target, self._background, x0, y0, x1, y1)
+                      - shape.window_sse(before, self.target, self._background, x0, y0, x1, y1))
+        return parent.fitness + delta / self.target.size
 
     def mutate(self, genome: Genome, rng: Random, rate: float) -> Genome:
         per_element = min(1.0, self.mutations_per_child / max(1, len(genome)))

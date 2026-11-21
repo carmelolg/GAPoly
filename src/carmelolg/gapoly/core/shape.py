@@ -22,10 +22,21 @@ class Shape(ABC):
     uses_size: ClassVar[bool]  # whether ``Limits.max_size`` (and the size schedule) mean something
     default_elements: ClassVar[int]  # default for ``--elements``
     default_initial: ClassVar[int]  # elements each individual starts with
+    incremental: ClassVar[bool] = True  # a changed element only changes the pixels in its box (False: Voronoi)
 
     @abstractmethod
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         """Mean squared error between the drawn genome and ``target`` (one compiled loop, no image is built)."""
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int, y1: int) -> float:
+        """Sum of squared errors of the drawn genome over the pixels ``x0 <= x < x1``, ``y0 <= y < y1``, drawing only
+        that window. A shape with ``incremental = True`` implements it, with ``boxes``."""
+        raise NotImplementedError(f"{type(self).__name__} cannot be evaluated by windows")
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        """The pixels each row paints, as an int64 array of ``(x0, x1, y0, y1)``, one per row, clipped to the image.
+        Empty when ``x1 <= x0`` or ``y1 <= y0``."""
+        raise NotImplementedError(f"{type(self).__name__} cannot be evaluated by windows")
 
     @abstractmethod
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:

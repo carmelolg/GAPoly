@@ -25,7 +25,7 @@ import numpy as np
 from numba import njit
 
 from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
+from ..core.kernels import canvas_mse, fill, window_error
 from ..core.operators import mutate_rows
 from ..core.shape import Shape
 
@@ -125,28 +125,48 @@ def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_stroke:
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def _draw(genome, canvas):  # type: ignore[no-untyped-def]
-    height, width = canvas.shape[0], canvas.shape[1]
+def _curve(row, width, height, pts_x, pts_y):  # type: ignore[no-untyped-def]
+    """Flatten the stroke into ``pts_x`` / ``pts_y``; returns the number of segments, the half brush width and the
+    pixels ``(x0, x1, y0, y1)`` the stroke can paint."""
     side = max(width, height)
+    ax, ay = row[X0] * width, row[Y0] * height
+    bx, by = row[CX] * width, row[CY] * height
+    ex, ey = row[X1] * width, row[Y1] * height
+    half = max(row[WIDTH] * side / 2, _MIN_HALF_PX)
+    length = np.hypot(bx - ax, by - ay) + np.hypot(ex - bx, ey - by)  # the control polygon bounds the curve length
+    n = min(_MAX_SEGMENTS, max(4, int(length / 3.0)))
+    min_x, max_x, min_y, max_y = width, 0.0, height, 0.0
+    for i in range(n + 1):
+        t = i / n
+        u = 1.0 - t
+        pts_x[i] = u * u * ax + 2.0 * u * t * bx + t * t * ex
+        pts_y[i] = u * u * ay + 2.0 * u * t * by + t * t * ey
+        min_x, max_x = min(min_x, pts_x[i]), max(max_x, pts_x[i])
+        min_y, max_y = min(min_y, pts_y[i]), max(max_y, pts_y[i])
+    return (n, half, max(0, int(np.floor(min_x - half))), min(width, int(np.ceil(max_x + half)) + 1),
+            max(0, int(np.floor(min_y - half))), min(height, int(np.ceil(max_y + half)) + 1))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _draw(genome, canvas, ox, oy, width, height):  # type: ignore[no-untyped-def]
+    """Paint the strokes on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     pts_x = np.empty(_MAX_SEGMENTS + 1, dtype=np.float64)
     pts_y = np.empty(_MAX_SEGMENTS + 1, dtype=np.float64)
+    side = max(width, height)
     for k in range(genome.shape[0]):
-        ax, ay = genome[k, X0] * width, genome[k, Y0] * height
-        bx, by = genome[k, CX] * width, genome[k, CY] * height
-        ex, ey = genome[k, X1] * width, genome[k, Y1] * height
-        half = max(genome[k, WIDTH] * side / 2, _MIN_HALF_PX)
-        length = np.hypot(bx - ax, by - ay) + np.hypot(ex - bx, ey - by)  # the control polygon bounds the curve length
-        n = min(_MAX_SEGMENTS, max(4, int(length / 3.0)))
-        min_x, max_x, min_y, max_y = width, 0.0, height, 0.0
-        for i in range(n + 1):
-            t = i / n
-            u = 1.0 - t
-            pts_x[i] = u * u * ax + 2.0 * u * t * bx + t * t * ex
-            pts_y[i] = u * u * ay + 2.0 * u * t * by + t * t * ey
-            min_x, max_x = min(min_x, pts_x[i]), max(max_x, pts_x[i])
-            min_y, max_y = min(min_y, pts_y[i]), max(max_y, pts_y[i])
-        x0, x1 = max(0, int(np.floor(min_x - half))), min(width, int(np.ceil(max_x + half)) + 1)
-        y0, y1 = max(0, int(np.floor(min_y - half))), min(height, int(np.ceil(max_y + half)) + 1)
+        # The curve stays inside the box of its three points: skip, without flattening it, the strokes that cannot
+        # reach this window (the margin covers the brush and the rounding of the pixel box).
+        reach = max(genome[k, WIDTH] * side / 2, _MIN_HALF_PX) + 3.0
+        if (max(genome[k, X0], genome[k, CX], genome[k, X1]) * width + reach <= ox
+                or min(genome[k, X0], genome[k, CX], genome[k, X1]) * width - reach >= ox + canvas.shape[1]
+                or max(genome[k, Y0], genome[k, CY], genome[k, Y1]) * height + reach <= oy
+                or min(genome[k, Y0], genome[k, CY], genome[k, Y1]) * height - reach >= oy + canvas.shape[0]):
+            continue
+        n, half, x0, x1, y0, y1 = _curve(genome[k], width, height, pts_x, pts_y)
+        x0, x1 = max(x0, ox), min(x1, ox + canvas.shape[1])
+        y0, y1 = max(y0, oy), min(y1, oy + canvas.shape[0])
+        if x1 <= x0 or y1 <= y0:
+            continue
         alpha = genome[k, ALPHA]
         keep = 1.0 - alpha
         r = genome[k, RED] * alpha
@@ -166,15 +186,14 @@ def _draw(genome, canvas):  # type: ignore[no-untyped-def]
                     dx, dy = xc - (sx + t * vx), yc - (sy + t * vy)
                     best = min(best, dx * dx + dy * dy)
                 if best <= limit:
-                    canvas[py, px, 0] = canvas[py, px, 0] * keep + r
-                    canvas[py, px, 1] = canvas[py, px, 1] * keep + g
-                    canvas[py, px, 2] = canvas[py, px, 2] * keep + b
-
+                    canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r
+                    canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g
+                    canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]
     fill(canvas, background)
-    _draw(genome, canvas)
+    _draw(genome, canvas, 0, 0, canvas.shape[1], canvas.shape[0])
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -182,6 +201,25 @@ def render_mse(genome, target, background):  # type: ignore[no-untyped-def]
     canvas = np.empty_like(target)
     render_into(genome, background, canvas)
     return canvas_mse(canvas, target)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_sse(genome, target, background, x0, y0, x1, y1):  # type: ignore[no-untyped-def]
+    """Squared error over the window ``x0 <= x < x1``, ``y0 <= y < y1``: only that window is drawn."""
+    canvas = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+    fill(canvas, background)
+    _draw(genome, canvas, x0, y0, target.shape[1], target.shape[0])
+    return window_error(canvas, target, x0, y0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def boxes(rows, width, height):  # type: ignore[no-untyped-def]
+    pts_x = np.empty(_MAX_SEGMENTS + 1, dtype=np.float64)
+    pts_y = np.empty(_MAX_SEGMENTS + 1, dtype=np.float64)
+    out = np.empty((rows.shape[0], 4), dtype=np.int64)
+    for k in range(rows.shape[0]):
+        _, _, out[k, 0], out[k, 1], out[k, 2], out[k, 3] = _curve(rows[k], width, height, pts_x, pts_y)
+    return out
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray) -> np.ndarray:
@@ -200,6 +238,13 @@ class StrokeShape(Shape):
 
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         return float(render_mse(genome, target, background))
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
+        return float(window_sse(genome, target, background, x0, y0, x1, y1))
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        return boxes(rows, width, height)
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)

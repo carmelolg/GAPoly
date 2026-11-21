@@ -32,6 +32,11 @@ def genome_for(shape, count=14, seed=5):
     return np.ascontiguousarray(genome)
 
 
+def window_args(name):
+    """The image-window arguments of ``_draw``: every shape but Voronoi draws a window of the image."""
+    return (0, 0, WIDTH, HEIGHT) if SHAPES[name].incremental else ()
+
+
 def extra_args(name):
     return (glyphs.atlas(),) if name == "glyph" else ()
 
@@ -49,7 +54,7 @@ def test_python_source_of_the_kernels_gives_the_same_pixels_as_the_compiled_ones
 
     drawn = np.empty_like(compiled)
     kernels.fill(drawn, BACKGROUND)
-    module._draw.py_func(genome, drawn, *extra)
+    module._draw.py_func(genome, drawn, *window_args(name), *extra)
     assert np.allclose(drawn, compiled, atol=1e-5)
 
     target = np.random.default_rng(0).random((HEIGHT, WIDTH, 3), dtype=np.float32)
@@ -65,7 +70,7 @@ def test_kernels_draw_nothing_for_an_empty_genome(name):
     module.render_into.py_func(shape.empty_genome(), BACKGROUND, canvas, *extra_args(name))
     assert np.allclose(canvas, BACKGROUND)
     canvas[:] = BACKGROUND
-    module._draw.py_func(shape.empty_genome(), canvas, *extra_args(name))
+    module._draw.py_func(shape.empty_genome(), canvas, *window_args(name), *extra_args(name))
     assert np.allclose(canvas, BACKGROUND)
 
 
@@ -148,3 +153,38 @@ def test_command_line_with_the_live_window(agg, tmp_path):
     assert main([str(photo), "--live", "--live-every", "2", "--generations", "4", "--population", "6", "--size", "20",
                  "--elements", "10", "--workers", "1", "--seed", "1", "--out", str(tmp_path / "out")]) == 0
     assert agg == [True]
+
+
+def box_helper(name, row):
+    """The pixel box of one row, from the Python source of the shape's box helper."""
+    module = KERNEL_MODULES[name]
+    if name == "stroke":
+        return module._curve.py_func(row, WIDTH, HEIGHT, np.empty(33), np.empty(33))[2:]
+    if name == "mosaic":
+        return module._tile.py_func(row, WIDTH, HEIGHT)[3:]
+    return module._box.py_func(row, WIDTH, HEIGHT)
+
+
+@pytest.mark.parametrize("name", [n for n, s in SHAPES.items() if s.incremental])
+def test_window_kernels_python_source_gives_the_same_numbers_as_the_compiled_ones(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    genome, extra = genome_for(shape), extra_args(name)
+    if name == "polygon":
+        genome[3, polygons.N_VERTICES] = 2  # fewer than 3 vertices: nothing is drawn, the box is empty
+    target = np.random.default_rng(1).random((HEIGHT, WIDTH, 3), dtype=np.float32)
+    for x0, y0, x1, y1 in [(0, 0, WIDTH, HEIGHT), (4, 3, 17, 12), (WIDTH - 3, HEIGHT - 2, WIDTH, HEIGHT), (0, 0, 1, 1)]:
+        compiled = module.window_sse(genome, target, BACKGROUND, x0, y0, x1, y1, *extra)
+        assert module.window_sse.py_func(genome, target, BACKGROUND, x0, y0, x1, y1, *extra) == pytest.approx(compiled, rel=1e-4)
+        window = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+        kernels.fill(window, BACKGROUND)
+        module._draw.py_func(genome, window, x0, y0, WIDTH, HEIGHT, *extra)  # the Python source of the windowed drawing
+        assert kernels.window_error(window, target, x0, y0) == pytest.approx(compiled, rel=1e-4)
+    boxes = module.boxes(genome, WIDTH, HEIGHT)
+    assert (module.boxes.py_func(genome, WIDTH, HEIGHT) == boxes).all()
+    assert [tuple(box_helper(name, row)) for row in genome] == [tuple(box) for box in boxes]
+
+
+def test_shared_row_comparison_and_boxes_python_source():
+    a = np.array([1, 2, 3], dtype=np.float32)
+    assert kernels._same_row.py_func(a, a.copy())
+    assert not kernels._same_row.py_func(a, a + np.array([0, 0, 1], dtype=np.float32))

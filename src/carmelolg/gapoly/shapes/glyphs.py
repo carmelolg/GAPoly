@@ -28,7 +28,7 @@ from numba import njit
 from PIL import Image, ImageDraw, ImageFont
 
 from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
+from ..core.kernels import canvas_mse, fill, window_error
 from ..core.operators import mutate_rows
 from ..core.shape import Shape
 
@@ -166,17 +166,28 @@ def _sample(mask, u, v):  # type: ignore[no-untyped-def]
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def _draw(genome, canvas, masks):  # type: ignore[no-untyped-def]
-    height, width = canvas.shape[0], canvas.shape[1]
+def _box(row, width, height):  # type: ignore[no-untyped-def]
+    """Pixels ``(x0, x1, y0, y1)`` a glyph row can paint (the circle around its rotated box)."""
+    reach = max(row[SIZE] * max(width, height) / 2, _MIN_HALF_PX) * 1.4143
+    cx, cy = row[X] * width, row[Y] * height
+    return (max(0, int(np.floor(cx - reach))), min(width, int(np.ceil(cx + reach)) + 1),
+            max(0, int(np.floor(cy - reach))), min(height, int(np.ceil(cy + reach)) + 1))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _draw(genome, canvas, ox, oy, width, height, masks):  # type: ignore[no-untyped-def]
+    """Paint the glyphs on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     side = max(width, height)
     count = masks.shape[0]
     for k in range(genome.shape[0]):
+        x0, x1, y0, y1 = _box(genome[k], width, height)
+        x0, x1 = max(x0, ox), min(x1, ox + canvas.shape[1])
+        y0, y1 = max(y0, oy), min(y1, oy + canvas.shape[0])
+        if x1 <= x0 or y1 <= y0:
+            continue
         cx = genome[k, X] * width
         cy = genome[k, Y] * height
         half = max(genome[k, SIZE] * side / 2, _MIN_HALF_PX)
-        reach = half * 1.4143  # the rotated square fits in a circle of this radius
-        x0, x1 = max(0, int(np.floor(cx - reach))), min(width, int(np.ceil(cx + reach)) + 1)
-        y0, y1 = max(0, int(np.floor(cy - reach))), min(height, int(np.ceil(cy + reach)) + 1)
         theta = genome[k, ANGLE] * 2.0 * np.pi
         cos_t, sin_t = np.cos(theta), np.sin(theta)
         mask = masks[min(int(genome[k, GLYPH] * count), count - 1)]
@@ -195,15 +206,14 @@ def _draw(genome, canvas, masks):  # type: ignore[no-untyped-def]
                 a = _sample(mask, (u / half + 1.0) * 0.5, (v / half + 1.0) * 0.5) * alpha
                 if a > 0.0:
                     keep = 1.0 - a
-                    canvas[py, px, 0] = canvas[py, px, 0] * keep + r * a
-                    canvas[py, px, 1] = canvas[py, px, 1] * keep + g * a
-                    canvas[py, px, 2] = canvas[py, px, 2] * keep + b * a
-
+                    canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r * a
+                    canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g * a
+                    canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b * a
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas, masks):  # type: ignore[no-untyped-def]
     fill(canvas, background)
-    _draw(genome, canvas, masks)
+    _draw(genome, canvas, 0, 0, canvas.shape[1], canvas.shape[0], masks)
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -211,6 +221,23 @@ def render_mse(genome, target, background, masks):  # type: ignore[no-untyped-de
     canvas = np.empty_like(target)
     render_into(genome, background, canvas, masks)
     return canvas_mse(canvas, target)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_sse(genome, target, background, x0, y0, x1, y1, masks):  # type: ignore[no-untyped-def]
+    """Squared error over the window ``x0 <= x < x1``, ``y0 <= y < y1``: only that window is drawn."""
+    canvas = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+    fill(canvas, background)
+    _draw(genome, canvas, x0, y0, target.shape[1], target.shape[0], masks)
+    return window_error(canvas, target, x0, y0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def boxes(rows, width, height):  # type: ignore[no-untyped-def]
+    out = np.empty((rows.shape[0], 4), dtype=np.int64)
+    for k in range(rows.shape[0]):
+        out[k, 0], out[k, 1], out[k, 2], out[k, 3] = _box(rows[k], width, height)
+    return out
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray,
@@ -230,6 +257,13 @@ class GlyphShape(Shape):
 
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         return float(render_mse(genome, target, background, atlas()))
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
+        return float(window_sse(genome, target, background, x0, y0, x1, y1, atlas()))
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        return boxes(rows, width, height)
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)
