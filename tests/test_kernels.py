@@ -188,3 +188,24 @@ def test_shared_row_comparison_and_boxes_python_source():
     a = np.array([1, 2, 3], dtype=np.float32)
     assert kernels._same_row.py_func(a, a.copy())
     assert not kernels._same_row.py_func(a, a + np.array([0, 0, 1], dtype=np.float32))
+
+
+@pytest.mark.parametrize("name", [n for n, s in SHAPES.items() if s.incremental])
+def test_delta_kernel_is_the_difference_of_the_two_full_errors(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    before, extra = genome_for(shape), extra_args(name)
+    target = np.random.default_rng(2).random((HEIGHT, WIDTH, 3), dtype=np.float32)
+    rng = Random(8)
+    edited = before.copy()
+    edited[5] = shape.random_row(rng, LIMITS)
+    changes = [edited, np.insert(before, 7, shape.random_row(rng, LIMITS), axis=0), np.delete(before, 3, axis=0)]
+    for after in changes:
+        expected = (float(((shape.render_image(after, WIDTH, HEIGHT, BACKGROUND) - target) ** 2).sum())
+                    - float(((shape.render_image(before, WIDTH, HEIGHT, BACKGROUND) - target) ** 2).sum()))
+        everything = WIDTH * HEIGHT
+        for function in (module.delta_sse, module.delta_sse.py_func):
+            assert function(before, after, target, BACKGROUND, 64, everything, *extra) == pytest.approx(expected, rel=1e-3, abs=1e-4)
+    assert module.delta_sse.py_func(before, before.copy(), target, BACKGROUND, 64, everything, *extra) == 0.0
+    for function in (module.delta_sse, module.delta_sse.py_func):
+        assert np.isnan(function(before, np.flip(before, axis=0).copy(), target, BACKGROUND, 2, everything, *extra))  # too many rows
+        assert np.isnan(function(before, edited, target, BACKGROUND, 64, 0, *extra))  # too many pixels

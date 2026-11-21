@@ -21,7 +21,7 @@ import numpy as np
 from numba import njit
 
 from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill, window_error
+from ..core.kernels import canvas_mse, fill, merge_boxes, unmatched_rows, window_error
 from ..core.operators import mutate_rows
 from ..core.shape import Shape
 
@@ -157,6 +157,35 @@ def boxes(rows, width, height):  # type: ignore[no-untyped-def]
     return out
 
 
+@njit(cache=True, nogil=True)  # no fastmath: NaN means "draw in full"
+def delta_sse(before, after, target, background, max_rows, max_pixels):  # type: ignore[no-untyped-def]
+    """Squared error of ``after`` minus that of ``before`` (two genomes that differ in a few rows), drawing only the
+    windows around the rows that differ. NaN when it is not worth it: more than ``max_rows`` rows differ or the
+    windows cover more than ``max_pixels``. Everything runs in compiled code that releases the GIL."""
+    height, width = target.shape[0], target.shape[1]
+    old_rows, new_rows, n_old, n_new = unmatched_rows(before, after, max_rows)
+    if n_old < 0:
+        return np.nan
+    if n_old == 0 and n_new == 0:
+        return 0.0
+    areas = np.empty((n_old + n_new, 4), dtype=np.int64)
+    for k in range(n_old + n_new):
+        at = k
+        row = before[old_rows[k]] if k < n_old else after[new_rows[k - n_old]]
+        areas[at, 0], areas[at, 1], areas[at, 2], areas[at, 3] = _box(row, width, height)
+    windows = merge_boxes(areas)
+    pixels = 0
+    for w in range(windows.shape[0]):
+        pixels += (windows[w, 1] - windows[w, 0]) * (windows[w, 3] - windows[w, 2])
+    if pixels > max_pixels:
+        return np.nan
+    delta = 0.0
+    for w in range(windows.shape[0]):
+        x0, x1, y0, y1 = windows[w, 0], windows[w, 1], windows[w, 2], windows[w, 3]
+        delta += window_sse(after, target, background, x0, y0, x1, y1) - window_sse(before, target, background, x0, y0, x1, y1)
+    return delta
+
+
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray) -> np.ndarray:
     canvas = np.empty((height, width, 3), dtype=np.float32)
     render_into(np.ascontiguousarray(genome, dtype=np.float32), background, canvas)
@@ -180,6 +209,10 @@ class DiscShape(Shape):
 
     def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
         return boxes(rows, width, height)
+
+    def delta_sse(self, before: Genome, after: Genome, target: Array, background: Array, max_rows: int,
+                  max_pixels: int) -> float:
+        return float(delta_sse(before, after, target, background, max_rows, max_pixels))
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)

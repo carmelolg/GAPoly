@@ -1,6 +1,7 @@
 """GALib Problem: minimise the MSE between the drawn elements and the target image."""
 from __future__ import annotations
 
+import math
 from random import Random
 
 import numpy as np
@@ -8,7 +9,6 @@ from carmelolg.galib import Individual, Problem
 
 from .core import operators
 from .core.common import Array, Genome, Limits
-from .core.kernels import merge_boxes, unmatched_rows
 from .core.shape import Shape
 from .shapes import POLYGON
 
@@ -57,22 +57,10 @@ class ImageProblem(Problem[Genome]):
         shape = self.shape
         if not shape.incremental:
             return self.fitness(genome)
-        before, after = parent.genome, genome
-        old_rows, new_rows, n_old, n_new = unmatched_rows(before, after, MAX_CHANGED_ROWS)
-        if n_old < 0:
+        delta = shape.delta_sse(parent.genome, genome, self.target, self._background, MAX_CHANGED_ROWS,
+                                int(MAX_REDRAWN * self.width * self.height))
+        if math.isnan(delta):  # too many rows differ or too much to redraw
             return self.fitness(genome)
-        if n_old == 0 and n_new == 0:
-            return parent.fitness
-        areas = np.concatenate((shape.boxes(before[old_rows[:n_old]], self.width, self.height),
-                                shape.boxes(after[new_rows[:n_new]], self.width, self.height)))
-        windows = merge_boxes(areas)
-        pixels = int(((windows[:, 1] - windows[:, 0]) * (windows[:, 3] - windows[:, 2])).sum())
-        if pixels > MAX_REDRAWN * self.width * self.height:
-            return self.fitness(genome)
-        delta = 0.0
-        for x0, x1, y0, y1 in windows:
-            delta += (shape.window_sse(after, self.target, self._background, x0, y0, x1, y1)
-                      - shape.window_sse(before, self.target, self._background, x0, y0, x1, y1))
         return parent.fitness + delta / self.target.size
 
     def mutate(self, genome: Genome, rng: Random, rate: float) -> Genome:

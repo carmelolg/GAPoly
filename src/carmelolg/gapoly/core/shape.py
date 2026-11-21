@@ -33,6 +33,13 @@ class Shape(ABC):
         that window. A shape with ``incremental = True`` implements it, with ``boxes``."""
         raise NotImplementedError(f"{type(self).__name__} cannot be evaluated by windows")
 
+    def delta_sse(self, before: Genome, after: Genome, target: Array, background: Array, max_rows: int,
+                  max_pixels: int) -> float:
+        """Squared error of ``after`` minus that of ``before``, two genomes that differ in a few rows, computed in one
+        compiled call that redraws only the windows around the differing rows. NaN when more than ``max_rows`` rows
+        differ or the windows cover more than ``max_pixels``: the caller then draws ``after`` in full."""
+        raise NotImplementedError(f"{type(self).__name__} cannot be evaluated by windows")
+
     def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
         """The pixels each row paints, as an int64 array of ``(x0, x1, y0, y1)``, one per row, clipped to the image.
         Empty when ``x1 <= x0`` or ``y1 <= y0``."""
