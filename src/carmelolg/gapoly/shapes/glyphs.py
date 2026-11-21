@@ -19,7 +19,6 @@ depends on the font Pillow finds, so tests must not depend on the exact pixels o
 """
 from __future__ import annotations
 
-import math
 from functools import cache
 from random import Random
 
@@ -27,9 +26,25 @@ import numpy as np
 from numba import njit
 from PIL import Image, ImageDraw, ImageFont
 
-from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
-from ..core.operators import mutate_rows
+from ..core.common import Array, Genome, Limits, Row
+from ..core.kernels import (
+    L_MAX_ALPHA,
+    L_MAX_ELEMENTS,
+    L_MAX_SIZE,
+    L_MIN_ALPHA,
+    L_MIN_SIZE,
+    canvas_mse,
+    clamp,
+    covered_pixels,
+    drop_and_move,
+    fill,
+    insert_row,
+    limits_array,
+    merge_boxes,
+    pick,
+    unmatched_rows,
+    window_error,
+)
 from ..core.shape import Shape
 
 X, Y, SIZE, ANGLE, GLYPH = 0, 1, 2, 3, 4
@@ -40,6 +55,7 @@ GLYPHS = "#%&*+=?@/\\|<>()[]{}~^:;-_oOxXzZ01"  # dark and light characters, roun
 ATLAS_SIZE = 48  # side in pixels of each character mask
 
 _MIN_HALF_PX = 0.7072  # a glyph box always reaches the centre of the pixel it sits in
+_SQRT2 = 1.4143  # a square box turned by any angle fits in a circle of this many half-sides
 
 
 def make_row(x: float, y: float, size: float, angle: float, glyph: float,
@@ -85,62 +101,107 @@ def atlas() -> Array:
     return masks
 
 
-def _size_bounds(limits: Limits) -> tuple[float, float]:
-    low = max(limits.min_size, 1e-4)
-    return low, max(low, limits.max_size)
+@njit(cache=True, nogil=True, fastmath=True)
+def _size_bounds(lim):  # type: ignore[no-untyped-def]
+    low = max(lim[L_MIN_SIZE], 1e-4)
+    return low, max(low, lim[L_MAX_SIZE])
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row(lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    """Random upright glyph at ``(cx, cy)``, at most ``max_size`` wide; negative values are drawn at random."""
+    low, high = _size_bounds(lim)
+    if cx < 0.0:
+        cx, cy = np.random.random(), np.random.random()
+    if r < 0.0:
+        r, g, b = np.random.random(), np.random.random(), np.random.random()
+    row = np.empty(COLS, dtype=np.float32)
+    row[X], row[Y] = cx, cy
+    row[SIZE] = np.random.uniform(low, high)
+    row[ANGLE] = 0.0
+    row[GLYPH] = np.random.random()
+    row[RED], row[GREEN], row[BLUE] = r, g, b
+    row[ALPHA] = np.random.uniform(max(lim[L_MIN_ALPHA], 0.1), min(lim[L_MAX_ALPHA], 0.6))
+    return row
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _new_row(lim):  # type: ignore[no-untyped-def]
+    return _random_row(lim, -1.0, -1.0, -1.0, -1.0, -1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _move(row, lim):  # type: ignore[no-untyped-def]
+    row[X] = clamp(row[X] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    row[Y] = clamp(row[Y] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _resize(row, lim):  # type: ignore[no-untyped-def]
+    """Scale the size by a log-normal factor; never grows past the cap (a glyph already above it can only shrink)."""
+    low, high = _size_bounds(lim)
+    row[SIZE] = clamp(row[SIZE] * np.exp(np.random.normal(0.0, 0.25)), low, max(high, row[SIZE]))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _rotate(row, lim):  # type: ignore[no-untyped-def]
+    row[ANGLE] = (row[ANGLE] + np.random.normal(0.0, 0.03)) % 1.0  # a turn wraps around
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
+    choice = np.random.random()
+    if choice < 0.35:
+        _move(row, lim)
+    elif choice < 0.65:
+        _resize(row, lim)
+    elif choice < 0.85:
+        _rotate(row, lim)
+    else:
+        row[GLYPH] = np.random.random()
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _change_color(row, lim):  # type: ignore[no-untyped-def]
+    for channel in range(RED, BLUE + 1):
+        row[channel] = clamp(row[channel] + np.random.normal(0.0, 0.06), 0.0, 1.0)
+    row[ALPHA] = clamp(row[ALPHA] + np.random.normal(0.0, 0.06), lim[L_MIN_ALPHA], lim[L_MAX_ALPHA])
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row_seeded(seed, lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    np.random.seed(seed)
+    return _random_row(lim, cx, cy, r, g, b)
+
+
+@njit(cache=True, nogil=True)
+def _mutate(genome, seed, rate, per_row, lim):  # type: ignore[no-untyped-def]
+    """Edit the shape of some elements, then the colour of some, add one, remove one, move one. ``seed`` starts the
+    thread's Numba generator, so a call depends only on its arguments. ``genome`` is not modified."""
+    np.random.seed(seed)
+    g = genome.copy()
+    picked = np.empty(g.shape[0], dtype=np.int64)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _edit_shape(g[picked[t]], lim)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _change_color(g[picked[t]], lim)
+    if np.random.random() < rate and g.shape[0] < lim[L_MAX_ELEMENTS]:
+        g = insert_row(g, np.random.randint(0, g.shape[0] + 1), _new_row(lim))
+    return drop_and_move(g, rate, lim, True)
 
 
 def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
                center: tuple[float, float] | None = None) -> Row:
     """Random upright glyph at ``center`` (random if omitted), at most ``max_size`` wide. ``rgb`` is the ink."""
-    low, high = _size_bounds(limits)
-    cx, cy = center if center is not None else (rng.random(), rng.random())
-    rgb = rgb if rgb is not None else (rng.random(), rng.random(), rng.random())
-    alpha = rng.uniform(max(limits.min_alpha, 0.1), min(limits.max_alpha, 0.6))
-    return make_row(cx, cy, rng.uniform(low, high), 0.0, rng.random(), (*rgb, alpha))
+    cx, cy = center if center is not None else (-1.0, -1.0)  # -1: draw it at random
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    return _random_row_seeded(rng.getrandbits(32), limits_array(limits), cx, cy, r, g, b)
 
 
-def move(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.015) -> None:
-    row[X] = clamp(float(row[X]) + rng.gauss(0, sigma))
-    row[Y] = clamp(float(row[Y]) + rng.gauss(0, sigma))
-
-
-def resize(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.25) -> None:
-    """Scale the size by a log-normal factor; never grows past the cap (a glyph already above it can only shrink)."""
-    low, high = _size_bounds(limits)
-    row[SIZE] = clamp(float(row[SIZE]) * math.exp(rng.gauss(0, sigma)), low, max(high, float(row[SIZE])))
-
-
-def rotate(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.03) -> None:
-    row[ANGLE] = (float(row[ANGLE]) + rng.gauss(0, sigma)) % 1.0  # a turn wraps around
-
-
-def change_glyph(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    row[GLYPH] = rng.random()
-
-
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in (RED, GREEN, BLUE):
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-    row[ALPHA] = clamp(float(row[ALPHA]) + rng.gauss(0, sigma), limits.min_alpha, limits.max_alpha)
-
-
-def _edit_shape(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    pick = rng.random()
-    if pick < 0.35:
-        move(row, rng, limits)
-    elif pick < 0.65:
-        resize(row, rng, limits)
-    elif pick < 0.85:
-        rotate(row, rng, limits)
-    else:
-        change_glyph(row, rng, limits)
-
-
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_glyph: float | None = None) -> Genome:
-    """Move, resize, rotate or re-letter some glyphs, recolour some, add / remove / reorder (``mutate_rows``)."""
-    return mutate_rows(genome, rng, rate, limits, per_glyph, _edit_shape, change_color,
-                       lambda r, lim: random_row(r, lim))
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
+    """Move, resize, rotate or change the character of some glyphs, recolour some, add / remove / reorder."""
+    return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
+                   rate if per_element is None else per_element, limits_array(limits))
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -166,17 +227,28 @@ def _sample(mask, u, v):  # type: ignore[no-untyped-def]
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def _draw(genome, canvas, masks):  # type: ignore[no-untyped-def]
-    height, width = canvas.shape[0], canvas.shape[1]
+def _box(row, width, height):  # type: ignore[no-untyped-def]
+    """Pixels ``(x0, x1, y0, y1)`` a glyph row can paint (the circle around its rotated box)."""
+    reach = max(row[SIZE] * max(width, height) / 2, _MIN_HALF_PX) * _SQRT2
+    cx, cy = row[X] * width, row[Y] * height
+    return (max(0, int(np.floor(cx - reach))), min(width, int(np.ceil(cx + reach)) + 1),
+            max(0, int(np.floor(cy - reach))), min(height, int(np.ceil(cy + reach)) + 1))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _draw(genome, canvas, ox, oy, width, height, masks):  # type: ignore[no-untyped-def]
+    """Paint the glyphs on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     side = max(width, height)
     count = masks.shape[0]
     for k in range(genome.shape[0]):
+        x0, x1, y0, y1 = _box(genome[k], width, height)
+        x0, x1 = max(x0, ox), min(x1, ox + canvas.shape[1])
+        y0, y1 = max(y0, oy), min(y1, oy + canvas.shape[0])
+        if x1 <= x0 or y1 <= y0:
+            continue
         cx = genome[k, X] * width
         cy = genome[k, Y] * height
         half = max(genome[k, SIZE] * side / 2, _MIN_HALF_PX)
-        reach = half * 1.4143  # the rotated square fits in a circle of this radius
-        x0, x1 = max(0, int(np.floor(cx - reach))), min(width, int(np.ceil(cx + reach)) + 1)
-        y0, y1 = max(0, int(np.floor(cy - reach))), min(height, int(np.ceil(cy + reach)) + 1)
         theta = genome[k, ANGLE] * 2.0 * np.pi
         cos_t, sin_t = np.cos(theta), np.sin(theta)
         mask = masks[min(int(genome[k, GLYPH] * count), count - 1)]
@@ -195,15 +267,14 @@ def _draw(genome, canvas, masks):  # type: ignore[no-untyped-def]
                 a = _sample(mask, (u / half + 1.0) * 0.5, (v / half + 1.0) * 0.5) * alpha
                 if a > 0.0:
                     keep = 1.0 - a
-                    canvas[py, px, 0] = canvas[py, px, 0] * keep + r * a
-                    canvas[py, px, 1] = canvas[py, px, 1] * keep + g * a
-                    canvas[py, px, 2] = canvas[py, px, 2] * keep + b * a
-
+                    canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r * a
+                    canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g * a
+                    canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b * a
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas, masks):  # type: ignore[no-untyped-def]
     fill(canvas, background)
-    _draw(genome, canvas, masks)
+    _draw(genome, canvas, 0, 0, canvas.shape[1], canvas.shape[0], masks)
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -211,6 +282,48 @@ def render_mse(genome, target, background, masks):  # type: ignore[no-untyped-de
     canvas = np.empty_like(target)
     render_into(genome, background, canvas, masks)
     return canvas_mse(canvas, target)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_sse(genome, target, background, x0, y0, x1, y1, masks):  # type: ignore[no-untyped-def]
+    """Squared error over the window ``x0 <= x < x1``, ``y0 <= y < y1``: only that window is drawn."""
+    canvas = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+    fill(canvas, background)
+    _draw(genome, canvas, x0, y0, target.shape[1], target.shape[0], masks)
+    return window_error(canvas, target, x0, y0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def boxes(rows, width, height):  # type: ignore[no-untyped-def]
+    out = np.empty((rows.shape[0], 4), dtype=np.int64)
+    for k in range(rows.shape[0]):
+        out[k, 0], out[k, 1], out[k, 2], out[k, 3] = _box(rows[k], width, height)
+    return out
+
+
+@njit(cache=True, nogil=True)  # no fastmath: NaN means "draw in full"
+def delta_sse(before, after, target, background, max_rows, max_pixels, masks):  # type: ignore[no-untyped-def]
+    """Squared error of ``after`` minus that of ``before`` (two genomes that differ in a few rows), drawing only the
+    windows around the rows that differ. NaN when it is not worth it: more than ``max_rows`` rows differ or the
+    windows cover more than ``max_pixels``. Everything runs in compiled code that releases the GIL."""
+    height, width = target.shape[0], target.shape[1]
+    old_rows, new_rows, n_old, n_new = unmatched_rows(before, after, max_rows)
+    if n_old < 0:
+        return np.nan
+    if n_old == 0 and n_new == 0:
+        return 0.0
+    areas = np.empty((n_old + n_new, 4), dtype=np.int64)
+    for k in range(n_old + n_new):
+        row = before[old_rows[k]] if k < n_old else after[new_rows[k - n_old]]
+        areas[k, 0], areas[k, 1], areas[k, 2], areas[k, 3] = _box(row, width, height)
+    windows = merge_boxes(areas)
+    if covered_pixels(windows) > max_pixels:
+        return np.nan
+    delta = 0.0
+    for w in range(windows.shape[0]):
+        x0, x1, y0, y1 = windows[w, 0], windows[w, 1], windows[w, 2], windows[w, 3]
+        delta += window_sse(after, target, background, x0, y0, x1, y1, masks) - window_sse(before, target, background, x0, y0, x1, y1, masks)
+    return delta
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray,
@@ -230,6 +343,17 @@ class GlyphShape(Shape):
 
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         return float(render_mse(genome, target, background, atlas()))
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
+        return float(window_sse(genome, target, background, x0, y0, x1, y1, atlas()))
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        return boxes(rows, width, height)
+
+    def delta_sse(self, before: Genome, after: Genome, target: Array, background: Array, max_rows: int,
+                  max_pixels: int) -> float:
+        return float(delta_sse(before, after, target, background, max_rows, max_pixels, atlas()))
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)

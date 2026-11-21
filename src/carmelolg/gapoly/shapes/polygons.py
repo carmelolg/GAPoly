@@ -17,7 +17,8 @@ Example: a half-transparent red triangle::
     [3,  0.10 0.10,  0.30 0.10,  0.20 0.30,  0 0 0 0 0 0,  1.0 0.0 0.0 0.5]
 
 Never index a row with bare numbers: use ``N_VERTICES``, ``X(v)``, ``Y(v)``, ``RED``..``ALPHA``, ``vertices``,
-``color`` and ``make_row``. ``describe(genome)`` prints a genome as text, handy when debugging.
+``color`` and ``make_row`` (the compiled kernels cannot call the Python helpers: they write the same offsets out as
+``VERTEX_START + 2 * v``). ``describe(genome)`` prints a genome as text, handy when debugging.
 
 The rasteriser samples pixels at their centres and a polygon covers a pixel by the even-odd rule.
 """
@@ -29,9 +30,26 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from ..core.common import Array, Genome, Limits, Row, clamp
-from ..core.kernels import canvas_mse, fill
-from ..core.operators import mutate_rows
+from ..core.common import Array, Genome, Limits, Row
+from ..core.kernels import (
+    L_MAX_ALPHA,
+    L_MAX_ELEMENTS,
+    L_MAX_SIZE,
+    L_MAX_VERTICES,
+    L_MIN_ALPHA,
+    L_MIN_VERTICES,
+    canvas_mse,
+    clamp,
+    covered_pixels,
+    drop_and_move,
+    fill,
+    insert_row,
+    limits_array,
+    merge_boxes,
+    pick,
+    unmatched_rows,
+    window_error,
+)
 from ..core.shape import Shape
 
 MAX_VERTICES = 6
@@ -90,71 +108,147 @@ def describe(genome: Genome) -> str:
     return "\n".join(lines)
 
 
-def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
-               center: tuple[float, float] | None = None) -> Row:
-    """Small random polygon around ``center`` (random if omitted). ``rgb`` is the colour; alpha is random."""
-    spread = limits.max_size / 2
-    cx, cy = center if center is not None else (rng.random(), rng.random())
-    n = rng.randint(limits.min_vertices, limits.max_vertices)
-    points = [(clamp(cx + rng.uniform(-spread, spread)), clamp(cy + rng.uniform(-spread, spread))) for _ in range(n)]
-    rgb = rgb if rgb is not None else (rng.random(), rng.random(), rng.random())
-    return make_row(points, (*rgb, rng.uniform(max(limits.min_alpha, 0.1), min(limits.max_alpha, 0.6))))
-
-
-def move_vertex(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.015) -> None:
-    """Move one vertex in place (``row`` is a private copy); undone if the polygon would grow past the cap."""
-    before, old = row.copy(), extent(row)
-    v = rng.randrange(int(row[N_VERTICES]))
-    row[X(v)] = clamp(float(row[X(v)]) + rng.gauss(0, sigma))
-    row[Y(v)] = clamp(float(row[Y(v)]) + rng.gauss(0, sigma))
-    if extent(row) > max(limits.max_size, old):  # never grow past the cap
-        row[:] = before
-
-
-def shift_polygon(row: np.ndarray, rng: Random, sigma: float = 0.02) -> None:
-    dx, dy = rng.gauss(0, sigma), rng.gauss(0, sigma)
-    for v in range(int(row[N_VERTICES])):
-        row[X(v)] = clamp(float(row[X(v)]) + dx)
-        row[Y(v)] = clamp(float(row[Y(v)]) + dy)
-
-
-def change_color(row: np.ndarray, rng: Random, limits: Limits, sigma: float = 0.06) -> None:
-    for channel in range(RED, GREEN + 2):  # red, green, blue
-        row[channel] = clamp(float(row[channel]) + rng.gauss(0, sigma))
-    row[ALPHA] = clamp(float(row[ALPHA]) + rng.gauss(0, sigma), limits.min_alpha, limits.max_alpha)
-
-
-def _edit_polygon(row: np.ndarray, rng: Random, limits: Limits) -> None:
-    if rng.random() < 0.7:
-        move_vertex(row, rng, limits)
-    else:
-        shift_polygon(row, rng)
-
-
-def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_polygon: float | None = None) -> Genome:
-    """Move or reshape some polygons, recolour some, add / remove / reorder (see ``operators.mutate_rows``)."""
-    return mutate_rows(genome, rng, rate, limits, per_polygon, _edit_polygon, change_color,
-                       lambda r, lim: random_row(r, lim))
+@njit(cache=True, nogil=True, fastmath=True)
+def _extent(row):  # type: ignore[no-untyped-def]
+    n = int(row[N_VERTICES])
+    min_x = max_x = row[VERTEX_START]
+    min_y = max_y = row[VERTEX_START + 1]
+    for v in range(1, n):
+        x, y = row[VERTEX_START + 2 * v], row[VERTEX_START + 2 * v + 1]
+        min_x, max_x = min(min_x, x), max(max_x, x)
+        min_y, max_y = min(min_y, y), max(max_y, y)
+    return max(max_x - min_x, max_y - min_y)
 
 
 @njit(cache=True, nogil=True, fastmath=True)
-def _draw(genome, canvas):  # type: ignore[no-untyped-def]
-    height, width = canvas.shape[0], canvas.shape[1]
+def _random_row(lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    """Small random polygon around ``(cx, cy)`` with colour ``(r, g, b)``; a negative value is drawn at random."""
+    spread = lim[L_MAX_SIZE] / 2
+    if cx < 0.0:
+        cx, cy = np.random.random(), np.random.random()
+    if r < 0.0:
+        r, g, b = np.random.random(), np.random.random(), np.random.random()
+    n = np.random.randint(int(lim[L_MIN_VERTICES]), int(lim[L_MAX_VERTICES]) + 1)
+    row = np.zeros(COLS, dtype=np.float32)
+    row[N_VERTICES] = n
+    for v in range(n):
+        row[VERTEX_START + 2 * v] = clamp(cx + np.random.uniform(-spread, spread), 0.0, 1.0)
+        row[VERTEX_START + 2 * v + 1] = clamp(cy + np.random.uniform(-spread, spread), 0.0, 1.0)
+    row[RED], row[GREEN], row[BLUE] = r, g, b
+    row[ALPHA] = np.random.uniform(max(lim[L_MIN_ALPHA], 0.1), min(lim[L_MAX_ALPHA], 0.6))
+    return row
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _new_row(lim):  # type: ignore[no-untyped-def]
+    return _random_row(lim, -1.0, -1.0, -1.0, -1.0, -1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _move_vertex(row, lim):  # type: ignore[no-untyped-def]
+    """Move one vertex in place; undone if the polygon would grow past the cap."""
+    before = row.copy()
+    old = _extent(row)
+    v = np.random.randint(0, int(row[N_VERTICES]))
+    row[VERTEX_START + 2 * v] = clamp(row[VERTEX_START + 2 * v] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    row[VERTEX_START + 2 * v + 1] = clamp(row[VERTEX_START + 2 * v + 1] + np.random.normal(0.0, 0.015), 0.0, 1.0)
+    if _extent(row) > max(lim[L_MAX_SIZE], old):  # never grow past the cap
+        row[:] = before
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _shift_polygon(row, lim):  # type: ignore[no-untyped-def]
+    dx, dy = np.random.normal(0.0, 0.02), np.random.normal(0.0, 0.02)
+    for v in range(int(row[N_VERTICES])):
+        row[VERTEX_START + 2 * v] = clamp(row[VERTEX_START + 2 * v] + dx, 0.0, 1.0)
+        row[VERTEX_START + 2 * v + 1] = clamp(row[VERTEX_START + 2 * v + 1] + dy, 0.0, 1.0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _edit_shape(row, lim):  # type: ignore[no-untyped-def]
+    if np.random.random() < 0.7:
+        _move_vertex(row, lim)
+    else:
+        _shift_polygon(row, lim)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _change_color(row, lim):  # type: ignore[no-untyped-def]
+    for channel in range(RED, BLUE + 1):
+        row[channel] = clamp(row[channel] + np.random.normal(0.0, 0.06), 0.0, 1.0)
+    row[ALPHA] = clamp(row[ALPHA] + np.random.normal(0.0, 0.06), lim[L_MIN_ALPHA], lim[L_MAX_ALPHA])
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _random_row_seeded(seed, lim, cx, cy, r, g, b):  # type: ignore[no-untyped-def]
+    np.random.seed(seed)
+    return _random_row(lim, cx, cy, r, g, b)
+
+
+@njit(cache=True, nogil=True)
+def _mutate(genome, seed, rate, per_row, lim):  # type: ignore[no-untyped-def]
+    """Edit the shape of some elements, then the colour of some, add one, remove one, move one. ``seed`` starts the
+    thread's Numba generator, so a call depends only on its arguments. ``genome`` is not modified."""
+    np.random.seed(seed)
+    g = genome.copy()
+    picked = np.empty(g.shape[0], dtype=np.int64)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _edit_shape(g[picked[t]], lim)
+    for t in range(pick(g.shape[0], per_row, picked)):
+        _change_color(g[picked[t]], lim)
+    if np.random.random() < rate and g.shape[0] < lim[L_MAX_ELEMENTS]:
+        g = insert_row(g, np.random.randint(0, g.shape[0] + 1), _new_row(lim))
+    return drop_and_move(g, rate, lim, True)
+
+
+def random_row(rng: Random, limits: Limits, rgb: tuple[float, float, float] | None = None,
+               center: tuple[float, float] | None = None) -> Row:
+    """Small random polygon around ``center`` (random if omitted). ``rgb`` is the colour; alpha is random."""
+    cx, cy = center if center is not None else (-1.0, -1.0)  # -1: draw it at random
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    return _random_row_seeded(rng.getrandbits(32), limits_array(limits), cx, cy, r, g, b)
+
+
+def mutate(genome: Genome, rng: Random, rate: float, limits: Limits, per_element: float | None = None) -> Genome:
+    """Move or reshape some polygons, recolour some, add / remove / reorder."""
+    return _mutate(np.ascontiguousarray(genome, dtype=np.float32), rng.getrandbits(32), rate,
+                   rate if per_element is None else per_element, limits_array(limits))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _box(row, width, height):  # type: ignore[no-untyped-def]
+    """Pixels ``(x0, x1, y0, y1)`` a polygon row can paint (empty for fewer than 3 vertices)."""
+    n = int(row[N_VERTICES])
+    if n < 3:
+        return 0, 0, 0, 0
+    min_x, max_x = width, 0.0
+    min_y, max_y = height, 0.0
+    for v in range(n):
+        x = row[VERTEX_START + 2 * v] * width
+        y = row[VERTEX_START + 2 * v + 1] * height
+        min_x, max_x = min(min_x, x), max(max_x, x)
+        min_y, max_y = min(min_y, y), max(max_y, y)
+    return (max(0, int(np.floor(min_x))), min(width, int(np.ceil(max_x)) + 1),
+            max(0, int(np.floor(min_y))), min(height, int(np.ceil(max_y)) + 1))
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def _draw(genome, canvas, ox, oy, width, height):  # type: ignore[no-untyped-def]
+    """Paint the polygons on ``canvas``, a window of a ``width`` x ``height`` image with its corner at ``(ox, oy)``."""
     xs = np.empty(MAX_VERTICES, dtype=np.float32)
     ys = np.empty(MAX_VERTICES, dtype=np.float32)
     for k in range(genome.shape[0]):
         n = int(genome[k, N_VERTICES])
         if n < 3:
             continue
-        min_x, max_x = width, 0.0
-        min_y, max_y = height, 0.0
+        x0, x1, y0, y1 = _box(genome[k], width, height)
+        x0, x1 = max(x0, ox), min(x1, ox + canvas.shape[1])
+        y0, y1 = max(y0, oy), min(y1, oy + canvas.shape[0])
+        if x1 <= x0 or y1 <= y0:
+            continue
         for v in range(n):
             xs[v] = genome[k, VERTEX_START + 2 * v] * width
             ys[v] = genome[k, VERTEX_START + 2 * v + 1] * height
-            min_x, max_x = min(min_x, xs[v]), max(max_x, xs[v])
-            min_y, max_y = min(min_y, ys[v]), max(max_y, ys[v])
-        x0, x1 = max(0, int(np.floor(min_x))), min(width, int(np.ceil(max_x)) + 1)
-        y0, y1 = max(0, int(np.floor(min_y))), min(height, int(np.ceil(max_y)) + 1)
         alpha = genome[k, ALPHA]
         keep = 1.0 - alpha
         r = genome[k, RED] * alpha
@@ -171,15 +265,14 @@ def _draw(genome, canvas):  # type: ignore[no-untyped-def]
                         inside = not inside
                     j = i
                 if inside:
-                    canvas[py, px, 0] = canvas[py, px, 0] * keep + r
-                    canvas[py, px, 1] = canvas[py, px, 1] * keep + g
-                    canvas[py, px, 2] = canvas[py, px, 2] * keep + b
-
+                    canvas[py - oy, px - ox, 0] = canvas[py - oy, px - ox, 0] * keep + r
+                    canvas[py - oy, px - ox, 1] = canvas[py - oy, px - ox, 1] * keep + g
+                    canvas[py - oy, px - ox, 2] = canvas[py - oy, px - ox, 2] * keep + b
 
 @njit(cache=True, nogil=True, fastmath=True)
 def render_into(genome, background, canvas):  # type: ignore[no-untyped-def]
     fill(canvas, background)
-    _draw(genome, canvas)
+    _draw(genome, canvas, 0, 0, canvas.shape[1], canvas.shape[0])
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -187,6 +280,48 @@ def render_mse(genome, target, background):  # type: ignore[no-untyped-def]
     canvas = np.empty_like(target)
     render_into(genome, background, canvas)
     return canvas_mse(canvas, target)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_sse(genome, target, background, x0, y0, x1, y1):  # type: ignore[no-untyped-def]
+    """Squared error over the window ``x0 <= x < x1``, ``y0 <= y < y1``: only that window is drawn."""
+    canvas = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+    fill(canvas, background)
+    _draw(genome, canvas, x0, y0, target.shape[1], target.shape[0])
+    return window_error(canvas, target, x0, y0)
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def boxes(rows, width, height):  # type: ignore[no-untyped-def]
+    out = np.empty((rows.shape[0], 4), dtype=np.int64)
+    for k in range(rows.shape[0]):
+        out[k, 0], out[k, 1], out[k, 2], out[k, 3] = _box(rows[k], width, height)
+    return out
+
+
+@njit(cache=True, nogil=True)  # no fastmath: NaN means "draw in full"
+def delta_sse(before, after, target, background, max_rows, max_pixels):  # type: ignore[no-untyped-def]
+    """Squared error of ``after`` minus that of ``before`` (two genomes that differ in a few rows), drawing only the
+    windows around the rows that differ. NaN when it is not worth it: more than ``max_rows`` rows differ or the
+    windows cover more than ``max_pixels``. Everything runs in compiled code that releases the GIL."""
+    height, width = target.shape[0], target.shape[1]
+    old_rows, new_rows, n_old, n_new = unmatched_rows(before, after, max_rows)
+    if n_old < 0:
+        return np.nan
+    if n_old == 0 and n_new == 0:
+        return 0.0
+    areas = np.empty((n_old + n_new, 4), dtype=np.int64)
+    for k in range(n_old + n_new):
+        row = before[old_rows[k]] if k < n_old else after[new_rows[k - n_old]]
+        areas[k, 0], areas[k, 1], areas[k, 2], areas[k, 3] = _box(row, width, height)
+    windows = merge_boxes(areas)
+    if covered_pixels(windows) > max_pixels:
+        return np.nan
+    delta = 0.0
+    for w in range(windows.shape[0]):
+        x0, x1, y0, y1 = windows[w, 0], windows[w, 1], windows[w, 2], windows[w, 3]
+        delta += window_sse(after, target, background, x0, y0, x1, y1) - window_sse(before, target, background, x0, y0, x1, y1)
+    return delta
 
 
 def render_image(genome: np.ndarray, width: int, height: int, background: np.ndarray) -> np.ndarray:
@@ -205,6 +340,17 @@ class PolygonShape(Shape):
 
     def render_mse(self, genome: Genome, target: Array, background: Array) -> float:
         return float(render_mse(genome, target, background))
+
+    def window_sse(self, genome: Genome, target: Array, background: Array, x0: int, y0: int, x1: int,
+                   y1: int) -> float:
+        return float(window_sse(genome, target, background, x0, y0, x1, y1))
+
+    def boxes(self, rows: Genome, width: int, height: int) -> np.ndarray:
+        return boxes(rows, width, height)
+
+    def delta_sse(self, before: Genome, after: Genome, target: Array, background: Array, max_rows: int,
+                  max_pixels: int) -> float:
+        return float(delta_sse(before, after, target, background, max_rows, max_pixels))
 
     def render_image(self, genome: Genome, width: int, height: int, background: Array) -> Array:
         return render_image(genome, width, height, background)

@@ -1,8 +1,28 @@
-"""Numba helpers shared by the rasterisers of every shape. The kernels release the GIL (``nogil``), so threads
-evaluate several genomes in parallel."""
+"""Numba helpers shared by every shape: the rasteriser pieces (fill, error of a window), the diff between a parent and
+a child genome and the windows to redraw, and the shared part of the mutation. The kernels release the GIL
+(``nogil``), so threads evaluate several genomes in parallel."""
 from __future__ import annotations
 
+from functools import cache
+
+import numpy as np
 from numba import njit
+
+from .common import Limits
+
+# Positions in the float64 array ``limits_array`` makes from a ``Limits``, for the compiled mutation code (``lim`` in the
+# kernels is that array, ``limits`` in Python the ``Limits`` object). The editors of a shape all take ``(row, lim)``, even
+# when they do not read ``lim``, so that they can be called alike.
+L_MIN_ELEMENTS, L_MAX_ELEMENTS, L_MIN_VERTICES, L_MAX_VERTICES, L_MIN_ALPHA, L_MAX_ALPHA, L_MAX_SIZE, L_MIN_SIZE = range(8)
+
+
+@cache
+def limits_array(limits: Limits) -> np.ndarray:
+    """The numbers of ``limits`` as a float64 array, in the order of the ``L_*`` constants (cached, read only)."""
+    values = np.array([limits.min_elements, limits.max_elements, limits.min_vertices, limits.max_vertices,
+                       limits.min_alpha, limits.max_alpha, limits.max_size, limits.min_size], dtype=np.float64)
+    values.setflags(write=False)
+    return values
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -24,3 +44,181 @@ def canvas_mse(canvas, target):  # type: ignore[no-untyped-def]
                 d = canvas[y, x, c] - target[y, x, c]
                 total += d * d
     return total / target.size
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def window_error(canvas, target, x0, y0):  # type: ignore[no-untyped-def]
+    """Sum of squared errors between ``canvas`` and the window of ``target`` whose top left corner is ``(x0, y0)``.
+
+    Same arithmetic as ``canvas_mse`` (squares in float32, sum in float64), so a window as big as the image gives
+    exactly the sum ``canvas_mse`` divides by the number of values."""
+    total = 0.0
+    for y in range(canvas.shape[0]):
+        for x in range(canvas.shape[1]):
+            for c in range(3):
+                d = canvas[y, x, c] - target[y0 + y, x0 + x, c]
+                total += d * d
+    return total
+
+
+@njit(cache=True, nogil=True)
+def _same_row(a, b):  # type: ignore[no-untyped-def]
+    for c in range(a.shape[0]):
+        if a[c] != b[c]:
+            return False
+    return True
+
+
+@njit(cache=True, nogil=True)
+def unmatched_rows(parent, child, limit):  # type: ignore[no-untyped-def]
+    """Rows of ``parent`` and of ``child`` that cannot be paired with an identical row of the other genome.
+
+    The pairing keeps the order (a greedy walk that looks one row ahead on each side, so an inserted, a removed,
+    an edited or a moved element leaves only itself unpaired). Whatever pairing is used is correct for the error:
+    paired rows are identical and in the same order, so pixels no unpaired row reaches are painted the same way
+    in both genomes. A tighter pairing only means a smaller area to redraw.
+
+    Returns ``(parent_rows, child_rows, n_parent, n_child)``: the first ``n_*`` entries of each array are row
+    indices. ``n_parent`` is -1 when more than ``limit`` rows are unpaired on either side (not worth it)."""
+    parent_rows = np.empty(limit, dtype=np.int64)
+    child_rows = np.empty(limit, dtype=np.int64)
+    n_parent = 0
+    n_child = 0
+    i = 0
+    j = 0
+    while i < parent.shape[0] or j < child.shape[0]:
+        take_parent = False
+        take_child = False
+        if i >= parent.shape[0]:
+            take_child = True
+        elif j >= child.shape[0]:
+            take_parent = True
+        elif _same_row(parent[i], child[j]):
+            i += 1
+            j += 1
+            continue
+        elif j + 1 < child.shape[0] and _same_row(parent[i], child[j + 1]):
+            take_child = True  # a row was inserted
+        elif i + 1 < parent.shape[0] and _same_row(parent[i + 1], child[j]):
+            take_parent = True  # a row was removed
+        else:
+            take_parent = True  # a row was edited: both sides are unpaired
+            take_child = True
+        if take_parent:
+            if n_parent == limit:
+                return parent_rows, child_rows, -1, -1
+            parent_rows[n_parent] = i
+            n_parent += 1
+            i += 1
+        if take_child:
+            if n_child == limit:
+                return parent_rows, child_rows, -1, -1
+            child_rows[n_child] = j
+            n_child += 1
+            j += 1
+    return parent_rows, child_rows, n_parent, n_child
+
+
+@njit(cache=True, nogil=True)
+def covered_pixels(windows):  # type: ignore[no-untyped-def]
+    """Number of pixels in ``windows``, boxes ``(x0, x1, y0, y1)`` that do not overlap (see ``merge_boxes``)."""
+    total = 0
+    for w in range(windows.shape[0]):
+        total += (windows[w, 1] - windows[w, 0]) * (windows[w, 3] - windows[w, 2])
+    return total
+
+
+@njit(cache=True, nogil=True)
+def merge_boxes(boxes):  # type: ignore[no-untyped-def]
+    """Replace boxes ``(x0, x1, y0, y1)`` that overlap by their bounding box, until none overlap. Empty boxes
+    (``x1 <= x0`` or ``y1 <= y0``) are dropped. Returns the surviving boxes, a new ``(m, 4)`` int64 array."""
+    count = boxes.shape[0]
+    work = np.empty((count, 4), dtype=np.int64)
+    alive = np.zeros(count, dtype=np.bool_)
+    for k in range(count):
+        work[k] = boxes[k]
+        alive[k] = boxes[k, 1] > boxes[k, 0] and boxes[k, 3] > boxes[k, 2]
+    merged = True
+    while merged:
+        merged = False
+        for a in range(count):
+            if not alive[a]:
+                continue
+            for b in range(a + 1, count):
+                if not alive[b]:
+                    continue
+                if work[a, 0] < work[b, 1] and work[b, 0] < work[a, 1] and work[a, 2] < work[b, 3] and work[b, 2] < work[a, 3]:
+                    work[a, 0] = min(work[a, 0], work[b, 0])
+                    work[a, 1] = max(work[a, 1], work[b, 1])
+                    work[a, 2] = min(work[a, 2], work[b, 2])
+                    work[a, 3] = max(work[a, 3], work[b, 3])
+                    alive[b] = False
+                    merged = True
+    result = np.empty((int(alive.sum()), 4), dtype=np.int64)
+    m = 0
+    for k in range(count):
+        if alive[k]:
+            result[m] = work[k]
+            m += 1
+    return result
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def clamp(value, low, high):  # type: ignore[no-untyped-def]
+    """``value`` limited to ``[low, high]``."""
+    return low if value < low else min(value, high)
+
+
+@njit(cache=True, nogil=True)
+def pick(count, probability, out):  # type: ignore[no-untyped-def]
+    """Fill ``out`` with indices in ``range(count)`` picked independently with ``probability`` (geometric jumps: one
+    random number per pick); returns how many. ``out`` must hold ``count`` values."""
+    if probability >= 1.0:
+        for i in range(count):
+            out[i] = i
+        return count
+    if probability <= 0.0:
+        return 0
+    log_miss = np.log1p(-probability)
+    picked = 0
+    i = -1
+    while True:
+        i += 1 + int(np.log(1.0 - np.random.random()) / log_miss)
+        if i >= count:
+            return picked
+        out[picked] = i
+        picked += 1
+
+
+@njit(cache=True, nogil=True)
+def insert_row(genome, at, row):  # type: ignore[no-untyped-def]
+    """A copy of ``genome`` with ``row`` inserted before position ``at``."""
+    out = np.empty((genome.shape[0] + 1, genome.shape[1]), dtype=genome.dtype)
+    out[:at] = genome[:at]
+    out[at] = row
+    out[at + 1 :] = genome[at:]
+    return out
+
+
+@njit(cache=True, nogil=True)
+def delete_row(genome, at):  # type: ignore[no-untyped-def]
+    """A copy of ``genome`` without the row at position ``at``."""
+    out = np.empty((genome.shape[0] - 1, genome.shape[1]), dtype=genome.dtype)
+    out[:at] = genome[:at]
+    out[at:] = genome[at + 1 :]
+    return out
+
+
+@njit(cache=True, nogil=True)
+def drop_and_move(genome, rate, lim, reorder):  # type: ignore[no-untyped-def]
+    """The end of every shape's mutation: with probability ``rate`` remove one element, with probability ``rate`` move
+    one to another place in the drawing order (``reorder=False`` for shapes where the order does not matter).
+    Draws from the Numba generator the shape's ``_mutate`` seeded. Returns a new genome when it changes."""
+    g = genome
+    if np.random.random() < rate and g.shape[0] > lim[L_MIN_ELEMENTS]:
+        g = delete_row(g, np.random.randint(0, g.shape[0]))
+    if reorder and np.random.random() < rate and g.shape[0] > 1:  # change overlap order
+        source = np.random.randint(0, g.shape[0])
+        row = g[source].copy()
+        g = insert_row(delete_row(g, source), np.random.randint(0, g.shape[0]), row)
+    return g

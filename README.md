@@ -132,13 +132,15 @@ python -m pytest
 
 ```
 src/carmelolg/gapoly/
-  problem.py        ImageProblem: the GALib Problem (fitness = MSE against the target), works with any Shape
+  problem.py        ImageProblem: the GALib Problem (fitness = MSE against the target, and fitness_from_parent:
+                    a mutated child is scored by redrawing only the pixels its changes touch), works with any Shape
   core/             what every shape shares
     shape.py          Shape, the Strategy interface
-    common.py         Limits, clamp, Genome / Row / Array types
-    operators.py      mutation skeleton and crossover used by every shape
-    kernels.py        Numba helpers (fill, MSE)
-  shapes/           one module per way of reading the genome: layout, Numba rasteriser, mutations, Shape class
+    common.py         Limits, Genome / Row / Array types
+    operators.py      crossover used by every shape
+    kernels.py        Numba helpers: fill, MSE, windows, parent / child diff, and the shared part of the mutation
+  shapes/           one module per way of reading the genome: layout, Numba rasteriser (it can draw a window of the
+                    image), Numba mutation, Shape class
     __init__.py       SHAPES, the registry (values of --shape)
     polygons.py  discs.py  voronoi.py  mosaic.py  glyphs.py  strokes.py
   callbacks/        GALib callbacks: snapshots.py (PNG, CSV, GIF), live.py (matplotlib), schedule.py (size cap)

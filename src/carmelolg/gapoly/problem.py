@@ -1,15 +1,19 @@
 """GALib Problem: minimise the MSE between the drawn elements and the target image."""
 from __future__ import annotations
 
+import math
 from random import Random
 
 import numpy as np
-from carmelolg.galib import Problem
+from carmelolg.galib import Individual, Problem
 
 from .core import operators
 from .core.common import Array, Genome, Limits
 from .core.shape import Shape
 from .shapes import POLYGON
+
+MAX_CHANGED_ROWS = 64  # a child that differs from its parent in more rows than this is drawn in full
+MAX_REDRAWN = 0.5  # ... and so is one whose changed windows cover more than this fraction of the image
 
 
 class ImageProblem(Problem[Genome]):
@@ -42,6 +46,22 @@ class ImageProblem(Problem[Genome]):
 
     def fitness(self, genome: Genome) -> float:
         return self.shape.render_mse(genome, self.target, self._background)
+
+    def fitness_from_parent(self, genome: Genome, parent: Individual[Genome]) -> float:
+        """The error of a mutated child from its parent's, drawing only the pixels the changes can touch.
+
+        Elements the child shares with the parent, in the same order, paint the same pixels. So the error differs
+        only inside the boxes of the elements that were added, removed or edited (before and after): the two
+        genomes are drawn in those windows alone and the difference of the squared errors is added to the parent's.
+        """
+        shape = self.shape
+        if not shape.incremental:
+            return self.fitness(genome)
+        delta = shape.delta_sse(parent.genome, genome, self.target, self._background, MAX_CHANGED_ROWS,
+                                int(MAX_REDRAWN * self.width * self.height))
+        if math.isnan(delta):  # too many rows differ or too much to redraw
+            return self.fitness(genome)
+        return parent.fitness + delta / self.target.size
 
     def mutate(self, genome: Genome, rng: Random, rate: float) -> Genome:
         per_element = min(1.0, self.mutations_per_child / max(1, len(genome)))

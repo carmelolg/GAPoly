@@ -5,6 +5,7 @@ Numba compiled) and must give the same pixels as the compiled one: this checks t
 """
 import runpy
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from random import Random
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ from PIL import Image
 
 from carmelolg.gapoly import SHAPES, ImageProblem, Limits
 from carmelolg.gapoly.cli.help_format import colorize
-from carmelolg.gapoly.core import kernels, operators
+from carmelolg.gapoly.core import kernels
 from carmelolg.gapoly.shapes import discs, glyphs, mosaic, polygons, strokes, voronoi
 
 WIDTH, HEIGHT = 23, 17
@@ -30,6 +31,11 @@ def genome_for(shape, count=14, seed=5):
     genome[1, :2] = 1.0, 1.0
     genome[2, :2] = 0.5, 0.5
     return np.ascontiguousarray(genome)
+
+
+def window_args(name):
+    """The image-window arguments of ``_draw``: every shape but Voronoi draws a window of the image."""
+    return (0, 0, WIDTH, HEIGHT) if SHAPES[name].incremental else ()
 
 
 def extra_args(name):
@@ -49,7 +55,7 @@ def test_python_source_of_the_kernels_gives_the_same_pixels_as_the_compiled_ones
 
     drawn = np.empty_like(compiled)
     kernels.fill(drawn, BACKGROUND)
-    module._draw.py_func(genome, drawn, *extra)
+    module._draw.py_func(genome, drawn, *window_args(name), *extra)
     assert np.allclose(drawn, compiled, atol=1e-5)
 
     target = np.random.default_rng(0).random((HEIGHT, WIDTH, 3), dtype=np.float32)
@@ -65,7 +71,7 @@ def test_kernels_draw_nothing_for_an_empty_genome(name):
     module.render_into.py_func(shape.empty_genome(), BACKGROUND, canvas, *extra_args(name))
     assert np.allclose(canvas, BACKGROUND)
     canvas[:] = BACKGROUND
-    module._draw.py_func(shape.empty_genome(), canvas, *extra_args(name))
+    module._draw.py_func(shape.empty_genome(), canvas, *window_args(name), *extra_args(name))
     assert np.allclose(canvas, BACKGROUND)
 
 
@@ -93,9 +99,14 @@ def test_glyph_sampling_is_zero_outside_the_mask_and_matches_when_compiled():
 
 # ---- operators, help, entry point, live window --------------------------------------------------------------------
 
-def test_selected_picks_nothing_at_probability_zero_and_everything_at_one():
-    assert operators._selected(Random(0), 5, 0.0) == []
-    assert operators._selected(Random(0), 5, 1.0) == [0, 1, 2, 3, 4]
+@pytest.mark.parametrize("pick", [kernels.pick, kernels.pick.py_func])
+def test_pick_chooses_nothing_at_probability_zero_and_everything_at_one(pick):
+    out = np.empty(5, dtype=np.int64)
+    assert pick(5, 0.0, out) == 0
+    assert pick(5, 1.0, out) == 5 and list(out) == [0, 1, 2, 3, 4]
+    np.random.seed(0)
+    n = pick(5, 0.5, out)
+    assert 0 <= n <= 5 and list(out[:n]) == sorted(set(out[:n]))  # increasing indices, no repeats
 
 
 def test_colorize_leaves_text_that_is_already_coloured():
@@ -148,3 +159,195 @@ def test_command_line_with_the_live_window(agg, tmp_path):
     assert main([str(photo), "--live", "--live-every", "2", "--generations", "4", "--population", "6", "--size", "20",
                  "--elements", "10", "--workers", "1", "--seed", "1", "--out", str(tmp_path / "out")]) == 0
     assert agg == [True]
+
+
+def box_helper(name, row):
+    """The pixel box of one row, from the Python source of the shape's box helper."""
+    module = KERNEL_MODULES[name]
+    if name == "stroke":
+        return module._curve.py_func(row, WIDTH, HEIGHT, np.empty(strokes._MAX_SEGMENTS + 1), np.empty(strokes._MAX_SEGMENTS + 1))[2:]
+    if name == "mosaic":
+        return module._tile.py_func(row, WIDTH, HEIGHT)[3:]
+    return module._box.py_func(row, WIDTH, HEIGHT)
+
+
+@pytest.mark.parametrize("name", [n for n, s in SHAPES.items() if s.incremental])
+def test_window_kernels_python_source_gives_the_same_numbers_as_the_compiled_ones(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    genome, extra = genome_for(shape), extra_args(name)
+    if name == "polygon":
+        genome[3, polygons.N_VERTICES] = 2  # fewer than 3 vertices: nothing is drawn, the box is empty
+    target = np.random.default_rng(1).random((HEIGHT, WIDTH, 3), dtype=np.float32)
+    for x0, y0, x1, y1 in [(0, 0, WIDTH, HEIGHT), (4, 3, 17, 12), (WIDTH - 3, HEIGHT - 2, WIDTH, HEIGHT), (0, 0, 1, 1)]:
+        compiled = module.window_sse(genome, target, BACKGROUND, x0, y0, x1, y1, *extra)
+        assert module.window_sse.py_func(genome, target, BACKGROUND, x0, y0, x1, y1, *extra) == pytest.approx(compiled, rel=1e-4)
+        window = np.empty((y1 - y0, x1 - x0, 3), dtype=np.float32)
+        kernels.fill(window, BACKGROUND)
+        module._draw.py_func(genome, window, x0, y0, WIDTH, HEIGHT, *extra)  # the Python source of the windowed drawing
+        assert kernels.window_error(window, target, x0, y0) == pytest.approx(compiled, rel=1e-4)
+    boxes = module.boxes(genome, WIDTH, HEIGHT)
+    assert (module.boxes.py_func(genome, WIDTH, HEIGHT) == boxes).all()
+    assert [tuple(box_helper(name, row)) for row in genome] == [tuple(box) for box in boxes]
+
+
+def test_same_row_python_source():
+    a = np.array([1, 2, 3], dtype=np.float32)
+    assert kernels._same_row.py_func(a, a.copy())
+    assert not kernels._same_row.py_func(a, a + np.array([0, 0, 1], dtype=np.float32))
+
+
+@pytest.mark.parametrize("name", [n for n, s in SHAPES.items() if s.incremental])
+def test_delta_kernel_is_the_difference_of_the_two_full_errors(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    before, extra = genome_for(shape), extra_args(name)
+    target = np.random.default_rng(2).random((HEIGHT, WIDTH, 3), dtype=np.float32)
+    rng = Random(8)
+    edited = before.copy()
+    edited[5] = shape.random_row(rng, LIMITS)
+    changes = [edited, np.insert(before, 7, shape.random_row(rng, LIMITS), axis=0), np.delete(before, 3, axis=0)]
+    for after in changes:
+        expected = (float(((shape.render_image(after, WIDTH, HEIGHT, BACKGROUND) - target) ** 2).sum())
+                    - float(((shape.render_image(before, WIDTH, HEIGHT, BACKGROUND) - target) ** 2).sum()))
+        everything = WIDTH * HEIGHT
+        for function in (module.delta_sse, module.delta_sse.py_func):
+            assert function(before, after, target, BACKGROUND, 64, everything, *extra) == pytest.approx(expected, rel=1e-3, abs=1e-4)
+    assert module.delta_sse.py_func(before, before.copy(), target, BACKGROUND, 64, everything, *extra) == 0.0
+    for function in (module.delta_sse, module.delta_sse.py_func):
+        assert np.isnan(function(before, np.flip(before, axis=0).copy(), target, BACKGROUND, 2, everything, *extra))  # too many rows
+        assert np.isnan(function(before, edited, target, BACKGROUND, 64, 0, *extra))  # too many pixels
+
+
+# ---- compiled mutation -------------------------------------------------------------------------------------------
+
+EDITORS = {  # the (row, limits) functions of each shape's compiled mutation, by module attribute
+    "polygon": ["_move_vertex", "_shift_polygon", "_edit_shape", "_change_color"],
+    "stroke": ["_move_point", "_shift_stroke", "_resize", "_edit_shape", "_change_color"],
+    "disc": ["_move", "_resize", "_edit_shape", "_change_color"],
+    "glyph": ["_move", "_resize", "_rotate", "_edit_shape", "_change_color"],
+    "mosaic": ["_move", "_resize", "_edit_shape", "_change_color"],
+    "voronoi": ["_edit_shape", "_change_color"],
+}
+BOUNDS = {"stroke": "_width_bounds", "disc": "_radius_bounds", "glyph": "_size_bounds", "mosaic": "_radius_bounds"}
+LIM = kernels.limits_array(LIMITS)
+
+
+def valid_genome(shape, count=12):
+    """Rows as the program makes them (``genome_for`` pokes the first columns, which for polygons are the vertex count)."""
+    return np.ascontiguousarray(np.stack([shape.random_row(Random(7 + k), LIMITS) for k in range(count)]))
+
+
+def test_limits_array_follows_the_l_constants_and_is_read_only():
+    assert LIM[kernels.L_MAX_ELEMENTS] == LIMITS.max_elements and LIM[kernels.L_MAX_SIZE] == LIMITS.max_size
+    assert LIM[kernels.L_MIN_ALPHA] == LIMITS.min_alpha and LIM[kernels.L_MIN_VERTICES] == LIMITS.min_vertices
+    assert kernels.limits_array(LIMITS) is LIM  # cached
+    with pytest.raises(ValueError):
+        LIM[0] = 5
+
+
+@pytest.mark.parametrize("name", list(EDITORS))
+def test_python_source_of_the_row_editors_keeps_rows_valid(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    np.random.seed(3)
+    for editor in EDITORS[name]:
+        for _ in range(60):  # enough draws to take every branch of the random choices
+            row = valid_genome(shape)[3].copy()
+            getattr(module, editor).py_func(row, LIM)
+            values = row[1:] if name == "polygon" else row  # the first column of a polygon is its vertex count
+            assert np.isfinite(row).all() and values.min() >= 0.0 and values.max() <= 1.0 + 1e-6
+    if name in BOUNDS:
+        low, high = getattr(module, BOUNDS[name]).py_func(LIM)
+        assert 0 < low <= high
+    if name in ("polygon", "stroke"):
+        assert module._extent.py_func(valid_genome(shape)[3]) >= 0.0
+
+
+@pytest.mark.parametrize("name", list(EDITORS))
+def test_random_rows_honour_the_centre_and_colour_asked_for_and_are_random_otherwise(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    row = shape.random_row(Random(1), LIMITS, (0.25, 0.5, 0.75), (0.4, 0.6))
+    assert row.dtype == np.float32 and len(row) == shape.cols
+    assert np.allclose(row[[module.RED, module.GREEN, module.BLUE]], (0.25, 0.5, 0.75))
+    if name not in ("polygon", "stroke"):  # the other rows hold their centre in X and Y
+        assert np.allclose(row[[module.X, module.Y]], (0.4, 0.6))
+    a, b = shape.random_row(Random(1), LIMITS), shape.random_row(Random(2), LIMITS)
+    assert (a == shape.random_row(Random(1), LIMITS)).all() and not (a == b).all()
+    np.random.seed(0)
+    plain = module._random_row.py_func(LIM, -1.0, -1.0, -1.0, -1.0, -1.0)
+    assert np.isfinite(plain).all() and module._new_row.py_func(LIM).shape == plain.shape
+    assert module._random_row_seeded.py_func(5, LIM, 0.2, 0.3, 0.1, 0.2, 0.3).shape == plain.shape
+
+
+@pytest.mark.parametrize("name", list(EDITORS))
+def test_python_source_of_the_whole_mutation_covers_every_operation(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    genome = valid_genome(shape)
+    sizes = set()
+    for seed in range(40):
+        child = module._mutate.py_func(genome, seed, 1.0, 0.5, LIM)  # rate 1: add, remove and reorder every time
+        assert child.shape[1] == shape.cols and child.dtype == np.float32
+        sizes.add(len(child))
+        compiled = module._mutate(genome, seed, 1.0, 0.5, LIM)
+        assert compiled.shape[1] == shape.cols
+    assert genome.shape == (12, shape.cols) and sizes <= {11, 12, 13}  # the input is untouched, one row in, one out
+    full = np.ascontiguousarray(np.tile(genome, (6, 1))[: int(LIM[kernels.L_MAX_ELEMENTS])])  # at the cap: no more rows
+    assert len(module._mutate.py_func(full, 1, 1.0, 0.0, LIM)) <= len(full)
+    one = np.ascontiguousarray(genome[:1])  # at the minimum of one element: nothing removed, nothing to reorder
+    assert len(module._mutate.py_func(one, 1, 0.0, 0.0, LIM)) == 1
+
+
+def test_a_mutation_depends_only_on_its_seed_and_arguments_whatever_the_thread():
+    genome = valid_genome(SHAPES["polygon"])
+    expected = polygons._mutate(genome, 9, 0.4, 0.3, LIM)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: polygons._mutate(genome, 9, 0.4, 0.3, LIM), range(16)))
+    assert all((r == expected).all() for r in results)
+    other = polygons._mutate(genome, 10, 0.4, 0.3, LIM)  # another seed, another child
+    assert not (other.shape == expected.shape and (other == expected).all())
+
+
+def test_insert_row_python_source():
+    genome = np.arange(12, dtype=np.float32).reshape(4, 3)
+    out = kernels.insert_row.py_func(genome, 1, np.full(3, 99, dtype=np.float32))
+    assert out.shape == (5, 3) and (out[1] == 99).all() and (out[2] == genome[1]).all() and (out[0] == genome[0]).all()
+
+
+def test_delete_row_python_source():
+    genome = np.arange(12, dtype=np.float32).reshape(4, 3)
+    assert (kernels.delete_row.py_func(genome, 1) == np.delete(genome, 1, axis=0)).all()
+
+
+@pytest.mark.parametrize("reorder", [True, False])
+def test_drop_and_move_python_source(reorder):
+    genome = np.arange(12, dtype=np.float32).reshape(4, 3)
+    np.random.seed(2)
+    out = kernels.drop_and_move.py_func(genome, 1.0, LIM, reorder)
+    assert len(out) == 3 and all(tuple(row) in set(map(tuple, genome.tolist())) for row in out)  # one went away
+    assert kernels.drop_and_move.py_func(genome[:1], 1.0, LIM, reorder).shape == (1, 3)  # the last one stays
+
+
+def test_clamp_python_source():
+    clamp = kernels.clamp.py_func
+    assert clamp(-1.0, 0.0, 1.0) == 0.0 and clamp(2.0, 0.0, 1.0) == 1.0 and clamp(0.4, 0.0, 1.0) == 0.4
+
+
+
+@pytest.mark.parametrize("name", ["polygon", "stroke"])
+def test_moving_a_point_never_grows_the_element_past_the_size_cap(name):
+    module, shape = KERNEL_MODULES[name], SHAPES[name]
+    row = valid_genome(shape)[3]
+    capped = kernels.limits_array(Limits(max_elements=40, max_size=float(module._extent.py_func(row)), min_size=0.02))
+    mover = module._move_vertex if name == "polygon" else module._move_point
+    np.random.seed(1)
+    undone = 0
+    for _ in range(200):
+        moved = row.copy()
+        mover.py_func(moved, capped)
+        assert module._extent.py_func(moved) <= capped[kernels.L_MAX_SIZE] + 1e-6
+        undone += bool((moved == row).all())
+    assert undone > 0  # some moves would have grown it: those were taken back
+
+
+def test_a_stroke_of_zero_length_is_still_a_valid_row():
+    np.random.seed(0)
+    row = strokes._random_row.py_func(kernels.limits_array(Limits(max_size=0.0, min_size=0.0)), -1.0, -1.0, -1.0, -1.0, -1.0)
+    assert np.isfinite(row).all() and row[strokes.WIDTH] > 0
