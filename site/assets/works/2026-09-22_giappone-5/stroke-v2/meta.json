@@ -1,0 +1,10 @@
+{
+  "shape": "stroke",
+  "label": {
+    "it": "Tratti v2",
+    "en": "Strokes v2"
+  },
+  "params": {
+    "generations": 250000
+  }
+}
