@@ -1,0 +1,10 @@
+{
+  "shape": "polygon",
+  "label": {
+    "it": "Poligoni v2",
+    "en": "Polygons v2"
+  },
+  "params": {
+    "generations": 250000
+  }
+}
