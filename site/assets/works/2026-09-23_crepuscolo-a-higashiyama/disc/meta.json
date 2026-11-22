@@ -1,9 +1,5 @@
 {
   "shape": "disc",
-  "label": {
-    "it": "Dischi v2",
-    "en": "Discs v2"
-  },
   "params": {
     "generations": 250000
   }
