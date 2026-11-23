@@ -1,0 +1,20 @@
+{
+  "date": "2026-09-22",
+  "title": {
+    "it": "Lanterne e sakè",
+    "en": "Lanterns and sake"
+  },
+  "artist": "Redd Francisco",
+  "credits": [
+    {
+      "label": {
+        "it": "Foto su Unsplash",
+        "en": "Photo on Unsplash"
+      },
+      "url": "https://unsplash.com/photos/Bxzrd0p6yOM"
+    }
+  ],
+  "main": "disc",
+  "pinned": false,
+  "order": 6
+}

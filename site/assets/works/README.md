@@ -5,14 +5,14 @@ ogni pubblicazione: basta aggiungere o togliere cartelle.
 
 ## Come si chiama la cartella dell'opera
 
-`AAAA-MM-GG_nome-opera`, per esempio `2026-11-20_tokyo`.
-La data serve a ordinare (le più recenti per prime) e `nome-opera` diventa il titolo se non ne scrivi uno.
+`00_nome-opera`, per esempio `01_artemisia`: il numero è la posizione in galleria (vedi "Ordine della galleria")
+e `nome-opera` diventa il titolo se non ne scrivi uno. La data si legge da `date` in `meta.json`.
 Le cartelle che iniziano con `_` o `.` vengono ignorate (come `_template`).
 
 ## Struttura
 
 ```
-2026-11-20_tokyo/
+01_tokyo/
   original.jpg      la foto di partenza, condivisa da tutte le versioni
   meta.json         titolo, descrizione, tecnica, data, tag, "main" (la versione di copertina)
   disc/             una cartella per versione: copia qui la cartella --out di gapoly
@@ -34,6 +34,9 @@ Le cartelle che iniziano con `_` o `.` vengono ignorate (come `_template`).
 - **Copertina (anteprima):** in automatico è la versione con la fitness migliore (media di `best_mse` e `mean_mse`
   all'ultima generazione, da `history.csv`). Per forzarne un'altra: `"main": "mosaic"` in `meta.json` (nome della sottocartella).
 - **Opera in evidenza nella home:** `"featured": true` nel `meta.json`.
+- **Ordine della galleria:** `"order": n` nel `meta.json` (più piccolo = prima). Le opere con `"pinned": true` vengono
+  prima di tutte, in ordine di `order`; le altre seguono in ordine di `order`, e quelle senza `order` restano in
+  fondo, dalla più recente. Per nascondere un'opera, rinomina la cartella con `_` iniziale.
 
 ## Come si scrive la scheda di un'opera (`meta.json`)
 Segue la convenzione delle didascalie dei musei: il titolo da solo, l'autore e l'anno a parte.

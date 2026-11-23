@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-23",
+  "title": {
+    "it": "Crepuscolo a Higashiyama",
+    "en": "Dusk in Higashiyama"
+  },
+  "artist": "Sorasak",
+  "credits": [
+    {
+      "label": {
+        "it": "Foto su Unsplash",
+        "en": "Photo on Unsplash"
+      },
+      "url": "https://unsplash.com/photos/_UIN-pFfJ7c"
+    }
+  ],
+  "pinned": false,
+  "order": 7
+}

@@ -443,6 +443,8 @@ def build_work(folder: Path, out_root: Path, taken: set[str]) -> dict[str, Any] 
         "location": text_field(meta.get("location")),  # where the original work is, for a photo of a monument
         "credits": credits_field(meta.get("credits")),  # lines like "Photo: Name on Unsplash", with a link
         "featured": bool(meta.get("featured", False)),
+        "pinned": bool(meta.get("pinned", False)),  # the first row of the gallery, in "order"
+        "order": meta.get("order"),  # position in the gallery: pinned works first, then the others
         "original": original,
         "main": main["id"],
         "shapes": sorted({v["shape"] for v in variants if v["shape"]}),
@@ -580,6 +582,8 @@ def build(site: Path, out: Path) -> dict[str, Any]:
                     works.append(work)
     works.sort(key=lambda w: w["id"])
     works.sort(key=lambda w: w["date"] or "", reverse=True)  # newest first; undated last, in name order
+    # the gallery order: pinned works first, then the works with an "order" in meta.json; the rest keep the date order
+    works.sort(key=lambda w: (0 if w["pinned"] else 1, w["order"] if w["order"] is not None else 10**6))
 
     strings = load_strings(site)
     langs = list(strings)
