@@ -18,7 +18,7 @@ Each work folder holds what ``gapoly`` writes in its ``--out`` folder, plus the 
       meta.json        title, description, technique, shape, params... (optional)
 
 Languages: ``site/i18n/<lang>.json`` holds the texts of the page; ``site/index.html`` is a template, written once per
-language (the default language, ``it``, at the root and the others in ``<lang>/``). Titles, descriptions, tags, artists and
+language (the default language, ``en``, at the root and the others in ``<lang>/``). Titles, descriptions, tags, artists and
 labels in ``site.json`` and ``meta.json`` are either a plain string (the same in every language) or ``{"it": ..., "en": ...}``.
 
 Folders whose name starts with ``_`` or ``.`` are ignored. The images are shrunk for the web: the folders in
@@ -70,7 +70,7 @@ HISTORY_POINTS = 80  # points of the error chart kept in works.json
 KNOWN_SHAPES = ("polygon", "disc", "voronoi", "mosaic", "glyph", "stroke")  # the values of gapoly's --shape
 HOME_WORKS = 8  # works shown in the home page; with more, a button leads to the page with all of them
 WORKS_PAGE = {"it": "opere", "en": "works"}  # folder of the page with all the works, per language
-DEFAULT_LANG = "it"
+DEFAULT_LANG = "en"
 LANGUAGES = {  # languages the site can be built in: locale for Intl / og:locale
     "it": {"locale": "it-IT", "og": "it_IT", "name": "Italiano"},
     "en": {"locale": "en-GB", "og": "en_GB", "name": "English"},

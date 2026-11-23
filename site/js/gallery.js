@@ -22,7 +22,7 @@
   const BASE = document.documentElement.dataset.base || "";
   const u = (path) => (path ? BASE + path : path);
   let STR = {};
-  let LOCALE = document.documentElement.lang || "it";
+  let LOCALE = document.documentElement.lang || "en";
   const t = (key, vars) => {
     let text = STR[key] ?? key;
     if (vars) for (const [name, value] of Object.entries(vars)) text = text.replaceAll(`{${name}}`, value);
@@ -607,7 +607,7 @@
     document.addEventListener("keydown", (e) => { if (dialog().open) onViewerKey(e); });
     addEventListener("hashchange", openFromHash);
     try {
-      const response = await fetch(u(document.documentElement.dataset.works || "data/works.it.json"), { cache: "no-cache" });
+      const response = await fetch(u(document.documentElement.dataset.works || "data/works.en.json"), { cache: "no-cache" });
       if (!response.ok) throw new Error(response.status);
       data = await response.json();
     } catch (error) {
