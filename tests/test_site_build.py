@@ -65,9 +65,9 @@ def test_a_work_with_a_single_version_is_built_with_light_images_and_its_data(si
 
     (work,) = data["works"]
     assert work["id"] == "2026-11-20_tokyo-mosaic" and work["title"] == "Tokyo" and work["date"] == "2026-11-20"
-    assert work["technique"] == "Algoritmo genetico" and work["shapes"] == ["mosaic"] and work["tags"] == ["city"]
+    assert work["technique"] == "Genetic algorithm" and work["shapes"] == ["mosaic"] and work["tags"] == ["city"]
     (variant,) = work["variants"]
-    assert work["main"] == variant["id"] and variant["shape"] == "mosaic" and variant["label"] == "Mosaico"
+    assert work["main"] == variant["id"] and variant["shape"] == "mosaic" and variant["label"] == "Mosaic"
     assert variant["params"] == {"seed": 1}
     assert variant["stats"] == {"generations": 300, "best_mse": pytest.approx(0.05 / 301, abs=1e-6),
                                 "mean_mse": pytest.approx(0.06 / 301, abs=1e-6), "elements": 310}
@@ -76,7 +76,7 @@ def test_a_work_with_a_single_version_is_built_with_light_images_and_its_data(si
         assert (out / path).is_file()
     with Image.open(out / work["original"]) as original, Image.open(out / variant["image"]) as image:
         assert original.size == image.size == (variant["width"], variant["height"]) == (120, 80)
-    assert json.loads((out / "data" / "works.it.json").read_text()) == data
+    assert json.loads((out / "data" / "works.en.json").read_text()) == data  # the default language is English
     assert (out / "index.html").is_file() and (out / "css" / "style.css").is_file() and (out / ".nojekyll").is_file()
 
 
@@ -133,7 +133,7 @@ def test_every_sub_folder_with_a_result_is_a_version_of_the_same_photo(site, tmp
     assert ids == ["disc", "mosaic", "my-experiment", "polygon-hq"]  # by name
     by_id = {v["id"]: v for v in work["variants"]}
     assert [by_id[i]["shape"] for i in ids] == ["disc", "mosaic", None, "polygon"]  # from the folder name when it starts with a shape
-    assert [by_id[i]["label"] for i in ids] == ["Dischi", "Mosaico", "My experiment", "Polygon hq"]
+    assert [by_id[i]["label"] for i in ids] == ["Discs", "Mosaic", "My experiment", "Polygon hq"]
     assert work["shapes"] == ["disc", "mosaic", "polygon"] and by_id["disc"]["params"] == {"elements": 5000}
     assert by_id["disc"]["stats"]["generations"] == 300 and by_id["mosaic"]["stats"] is None
     assert work["original"] is not None and work["main"] == "disc"  # the first, unless meta.json says otherwise
@@ -162,7 +162,7 @@ def test_files_in_the_work_folder_and_sub_folders_are_all_versions(site, tmp_pat
     folder = add_work(site, "w")  # a final.png right here
     add_version(folder, "disc")
     (work,) = build_site.build(site, tmp_path / "out")["works"]
-    assert [v["label"] for v in work["variants"]] == ["Risultato", "Dischi"]
+    assert [v["label"] for v in work["variants"]] == ["Result", "Discs"]
     assert len({v["image"] for v in work["variants"]}) == 2  # no two versions write on the same file
 
 
@@ -195,7 +195,7 @@ def test_title_and_date_have_sensible_defaults_and_bad_values_are_ignored(site, 
     folder = add_work(site, "2026-02-03_tre-onde-blu")
     (folder / "meta.json").write_text(json.dumps({"date": "3 febbraio"}))
     (work,) = build_site.build(site, tmp_path / "out")["works"]
-    assert work["title"] == "Tre onde blu" and work["date"] == "2026-02-03" and work["technique"] == "Arte generativa"
+    assert work["title"] == "Tre onde blu" and work["date"] == "2026-02-03" and work["technique"] == "Generative art"
     assert "date" in capsys.readouterr().err
 
 
@@ -213,7 +213,7 @@ def test_logo_favicon_and_site_settings(site, tmp_path):
     (site / "site.json").write_text(json.dumps({"title": "Il mio lab"}))
     out = tmp_path / "out"
     config = build_site.build(site, out)["site"]
-    assert config["title"] == "Il mio lab" and config["tagline"] == build_site.DEFAULT_SITE["tagline"]["it"]
+    assert config["title"] == "Il mio lab" and config["tagline"] == build_site.DEFAULT_SITE["tagline"]["en"]
     assert config["logo"] == "assets/logo/logo.png" and config["favicon"] == config["logo"]
     assert (out / "assets" / "logo" / "logo.png").is_file() and not (out / "assets" / "logo" / "README.md").exists()
 
@@ -295,8 +295,8 @@ def test_a_work_with_only_a_webp_animation_takes_its_last_frame(site, tmp_path):
 TEMPLATE = (
     '<html lang="{{lang}}" data-base="{{base}}" data-works="{{works_json}}"><head><title>{{site_title}} / {{site_tagline}}</title>'
     '{{{head_links}}}</head><body>{{{lang_switch}}}<h1>{{hero.title}}</h1><div>{{{raw.html}}}</div></body></html>')
-DICT_IT = {"hero.title": "Ciao", "raw.html": "<b>grassetto</b>", "lang.aria": "Lingua", "only.it": "Solo italiano"}
-DICT_EN = {"hero.title": "Hello", "raw.html": "<b>bold</b>", "lang.aria": "Language"}
+DICT_IT = {"hero.title": "Ciao", "raw.html": "<b>grassetto</b>", "lang.aria": "Lingua"}
+DICT_EN = {"hero.title": "Hello", "raw.html": "<b>bold</b>", "lang.aria": "Language", "only.en": "Only English"}
 
 
 @pytest.fixture
@@ -311,23 +311,23 @@ def bilingual(site):
 def test_a_page_and_a_data_file_are_written_for_every_language(bilingual, tmp_path):
     out = tmp_path / "out"
     build_site.build(bilingual, out)
-    italian, english = (out / "index.html").read_text(), (out / "en" / "index.html").read_text()
-    assert 'lang="it"' in italian and 'data-base=""' in italian and 'data-works="data/works.it.json"' in italian
-    assert 'lang="en"' in english and 'data-base="../"' in english and 'data-works="data/works.en.json"' in english
+    italian, english = (out / "it" / "index.html").read_text(), (out / "index.html").read_text()
+    assert 'lang="it"' in italian and 'data-base="../"' in italian and 'data-works="data/works.it.json"' in italian
+    assert 'lang="en"' in english and 'data-base=""' in english and 'data-works="data/works.en.json"' in english
     assert "<h1>Ciao</h1>" in italian and "<h1>Hello</h1>" in english
     assert "<b>grassetto</b>" in italian and "<b>bold</b>" in english  # three braces: HTML, as it is
     assert "gapoly / Immagini" in italian and "gapoly / Images" in english
     assert json.loads((out / "data" / "works.en.json").read_text())["strings"]["hero.title"] == "Hello"
     assert json.loads((out / "data" / "works.it.json").read_text())["locale"] == "it-IT"
-    assert (out / "css").is_dir() and not (out / "en" / "css").exists()  # static files are shared: one copy for both pages
+    assert (out / "css").is_dir() and not (out / "it" / "css").exists()  # static files are shared: one copy for both pages
 
 
 def test_the_language_switch_links_the_pages_to_each_other(bilingual, tmp_path):
     out = tmp_path / "out"
     build_site.build(bilingual, out)
-    italian, english = (out / "index.html").read_text(), (out / "en" / "index.html").read_text()
-    assert 'href="./" hreflang="it"' in italian and 'href="en/" hreflang="en"' in italian
-    assert 'href="../" hreflang="it"' in english and 'href="./" hreflang="en"' in english
+    italian, english = (out / "it" / "index.html").read_text(), (out / "index.html").read_text()
+    assert 'href="./" hreflang="it"' in italian and 'href="../" hreflang="en"' in italian
+    assert 'href="it/" hreflang="it"' in english and 'href="./" hreflang="en"' in english
     assert 'aria-current="true">IT<' in italian and 'aria-current="true">EN<' in english
     assert 'aria-label="Lingua"' in italian and 'aria-label="Language"' in english
 
@@ -338,24 +338,24 @@ def test_canonical_and_hreflang_links_need_the_site_url(bilingual, tmp_path):
     assert "hreflang=\"x-default\"" not in (out / "index.html").read_text()  # no URL known: no absolute links
     (bilingual / "site.json").write_text(json.dumps({"url": "https://example.org/lab"}))
     build_site.build(bilingual, out)
-    english = (out / "en" / "index.html").read_text()
-    assert '<link rel="canonical" href="https://example.org/lab/en/">' in english
-    assert '<link rel="alternate" hreflang="it" href="https://example.org/lab/">' in english
+    english = (out / "index.html").read_text()
+    assert '<link rel="canonical" href="https://example.org/lab/">' in english
+    assert '<link rel="alternate" hreflang="it" href="https://example.org/lab/it/">' in english
     assert '<link rel="alternate" hreflang="x-default" href="https://example.org/lab/">' in english
 
 
 def test_with_one_language_there_is_no_switch_and_no_language_folder(bilingual, tmp_path):
-    (bilingual / "i18n" / "en.json").unlink()
+    (bilingual / "i18n" / "it.json").unlink()
     out = tmp_path / "out"
     build_site.build(bilingual, out)
-    assert not (out / "en").exists() and 'class="lang"' not in (out / "index.html").read_text()
+    assert not (out / "it").exists() and 'class="lang"' not in (out / "index.html").read_text()
 
 
 def test_missing_translations_fall_back_to_the_default_language_with_a_warning(bilingual, tmp_path, capsys):
     out = tmp_path / "out"
     build_site.build(bilingual, out)
-    assert json.loads((out / "data" / "works.en.json").read_text())["strings"]["only.it"] == "Solo italiano"
-    assert "only.it" in capsys.readouterr().err
+    assert json.loads((out / "data" / "works.it.json").read_text())["strings"]["only.en"] == "Only English"
+    assert "only.en" in capsys.readouterr().err
 
 
 def test_a_placeholder_nobody_defines_is_reported(bilingual, tmp_path, capsys):
@@ -448,9 +448,9 @@ def test_the_template_and_the_script_only_use_keys_that_exist():
 def test_the_real_site_builds_in_both_languages_without_warnings(tmp_path, capsys):
     data = build_site.build(REAL_SITE, tmp_path / "out")
     out = tmp_path / "out"
-    assert (out / "en" / "index.html").is_file() and data["works"]
-    assert (out / "opere" / "index.html").is_file() and (out / "en" / "works" / "index.html").is_file()
-    assert 'data-page="works"' in (out / "en" / "works" / "index.html").read_text()
+    assert (out / "index.html").is_file() and (out / "it" / "index.html").is_file() and data["works"]
+    assert (out / "it" / "opere" / "index.html").is_file() and (out / "works" / "index.html").is_file()
+    assert 'data-page="works"' in (out / "works" / "index.html").read_text()
     assert capsys.readouterr().err == ""
 
 
@@ -582,10 +582,10 @@ def with_works_page(bilingual):
 def test_a_page_with_all_the_works_is_written_for_every_language(with_works_page, tmp_path):
     out = tmp_path / "out"
     build_site.build(with_works_page, out)
-    pages = {"it": out / "opere" / "index.html", "en": out / "en" / "works" / "index.html"}
+    pages = {"it": out / "it" / "opere" / "index.html", "en": out / "works" / "index.html"}
     assert all(page.is_file() for page in pages.values())
     assert "<h1>Tutte le opere</h1>" in pages["it"].read_text() and "<h1>All works</h1>" in pages["en"].read_text()
-    assert 'data-base="../"' in pages["it"].read_text() and 'data-base="../../"' in pages["en"].read_text()
+    assert 'data-base="../../"' in pages["it"].read_text() and 'data-base="../"' in pages["en"].read_text()
     assert 'data-page="works"' in pages["it"].read_text() and 'data-page="home"' in (out / "index.html").read_text()
     assert "gapoly — Tutte le opere" in pages["it"].read_text() and "gapoly — All works" in pages["en"].read_text()
 
@@ -593,16 +593,16 @@ def test_a_page_with_all_the_works_is_written_for_every_language(with_works_page
 def test_home_and_works_page_link_to_each_other_in_the_same_language(with_works_page, tmp_path):
     out = tmp_path / "out"
     build_site.build(with_works_page, out)
-    assert 'id="all" href="opere/"' in (out / "index.html").read_text()
-    assert 'id="all" href="works/"' in (out / "en" / "index.html").read_text()
-    assert 'id="back" href="../"' in (out / "opere" / "index.html").read_text()
-    assert 'id="back" href="../"' in (out / "en" / "works" / "index.html").read_text()  # en/works/ -> en/
+    assert 'id="all" href="opere/"' in (out / "it" / "index.html").read_text()
+    assert 'id="all" href="works/"' in (out / "index.html").read_text()
+    assert 'id="back" href="../"' in (out / "it" / "opere" / "index.html").read_text()
+    assert 'id="back" href="../"' in (out / "works" / "index.html").read_text()  # works/ -> root
 
 
 def test_the_header_of_the_works_page_leads_back_to_the_home(with_works_page, tmp_path):
     out = tmp_path / "out"
     build_site.build(with_works_page, out)
-    home, works = (out / "index.html").read_text(), (out / "opere" / "index.html").read_text()
+    home, works = (out / "index.html").read_text(), (out / "works" / "index.html").read_text()
     assert 'id="brand" href="#"' in home and 'id="method" href="#metodo"' in home
     assert 'id="brand" href="../"' in works and 'id="method" href="../#metodo"' in works
 
@@ -610,20 +610,20 @@ def test_the_header_of_the_works_page_leads_back_to_the_home(with_works_page, tm
 def test_the_language_switch_keeps_the_page(with_works_page, tmp_path):
     out = tmp_path / "out"
     build_site.build(with_works_page, out)
-    italian_works = (out / "opere" / "index.html").read_text()
-    english_works = (out / "en" / "works" / "index.html").read_text()
-    assert 'href="./" hreflang="it"' in italian_works and 'href="../en/works/" hreflang="en"' in italian_works
-    assert 'href="../../opere/" hreflang="it"' in english_works and 'href="./" hreflang="en"' in english_works
-    assert 'href="opere/"' not in (out / "index.html").read_text().split('class="lang"')[1]  # the home switch leads to homes
+    italian_works = (out / "it" / "opere" / "index.html").read_text()
+    english_works = (out / "works" / "index.html").read_text()
+    assert 'href="./" hreflang="it"' in italian_works and 'href="../../works/" hreflang="en"' in italian_works
+    assert 'href="../it/opere/" hreflang="it"' in english_works and 'href="./" hreflang="en"' in english_works
+    assert 'href="it/" hreflang="it"' in (out / "index.html").read_text()  # the home switch leads to homes
 
 
 def test_each_page_has_its_own_canonical_and_hreflang_links(with_works_page, tmp_path):
     out = tmp_path / "out"
     build_site.build(with_works_page, out)
-    english_works = (out / "en" / "works" / "index.html").read_text()
-    assert '<link rel="canonical" href="https://example.org/lab/en/works/">' in english_works
-    assert '<link rel="alternate" hreflang="it" href="https://example.org/lab/opere/">' in english_works
-    assert '<link rel="alternate" hreflang="x-default" href="https://example.org/lab/opere/">' in english_works
+    english_works = (out / "works" / "index.html").read_text()
+    assert '<link rel="canonical" href="https://example.org/lab/works/">' in english_works
+    assert '<link rel="alternate" hreflang="it" href="https://example.org/lab/it/opere/">' in english_works
+    assert '<link rel="alternate" hreflang="x-default" href="https://example.org/lab/works/">' in english_works
     assert '<link rel="canonical" href="https://example.org/lab/">' in (out / "index.html").read_text()
 
 
@@ -637,7 +637,7 @@ def test_the_data_tells_how_many_works_the_home_shows(with_works_page, tmp_path)
 def test_without_a_works_template_there_is_only_the_home(bilingual, tmp_path):
     out = tmp_path / "out"
     build_site.build(bilingual, out)
-    assert not (out / "opere").exists() and not (out / "en" / "works").exists()
+    assert not (out / "it" / "opere").exists() and not (out / "works" / "index.html").exists()  # works/ holds the images
 
 
 def test_the_history_of_an_old_run_with_a_polygons_column_is_read(site, tmp_path):
