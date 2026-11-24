@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-24",
+  "title": {
+    "it": "Porta torii rossa sul sentiero forestale",
+    "en": "Red torii gate on a forest path"
+  },
+  "description": {
+    "it": "Un torii rosso in fondo a un sentiero nel bosco di cedri, con la luce che filtra tra gli alberi. Il santuario di Hakone, nella prefettura di Kanagawa.",
+    "en": "A red torii at the end of a path through the cedar forest, with light filtering between the trees. The Hakone shrine, Kanagawa Prefecture."
+  },
+  "artist": "Syuhei Inoue",
+  "location": {
+    "it": "Hakone, Giappone",
+    "en": "Hakone, Japan"
+  },
+  "year": "2020",
+  "technique": "Algoritmo genetico",
+  "tags": ["paesaggio", "giappone"],
+  "credits": [
+    {
+      "label": {
+        "it": "Foto su Unsplash",
+        "en": "Photo on Unsplash"
+      },
+      "url": "https://unsplash.com/it/foto/porta-torii-rossa-sul-sentiero-forestale-kaoHI0iHJPM"
+    }
+  ],
+  "pinned": false,
+  "order": 11
+}
